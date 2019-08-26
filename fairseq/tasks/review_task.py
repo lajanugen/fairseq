@@ -64,10 +64,6 @@ class ReviewTask(FairseqTask):
                             help='Feed all task training examples as input.')
         parser.add_argument('--no_training', action='store_true',
                             help='No fine-tuning.')
-        parser.add_argument('--train_unseen_task', action='store_true',
-                            help='Train on unseen task.')
-        parser.add_argument('--eval_task_id', default=0, type=int,
-                            help='Eval task id')
 
         # fmt: on
 
@@ -93,8 +89,7 @@ class ReviewTask(FairseqTask):
         data_path = paths[epoch % len(paths)]
 
         # e.g., /path/to/data/train.{bin,idx}
-        # split_path = os.path.join(data_path, split)
-        split_path = os.path.join(data_path, 'test-test')
+        split_path = os.path.join(data_path, split)
         dataset = data_utils.load_indexed_dataset(split_path, self.vocab, self.args.dataset_impl)
         if dataset is None:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, split_path))
@@ -114,8 +109,6 @@ class ReviewTask(FairseqTask):
             # a single document.
             break_mode='complete_doc',
         )
-
-        dataset = [dataset[10]]
 
         # prepend a beginning of sentence token (<s>) to each sample
         if self.args.add_bos_token:
