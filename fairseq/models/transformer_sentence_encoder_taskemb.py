@@ -186,34 +186,17 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         padding_mask = tokens.eq(self.padding_idx)
         if not padding_mask.any():
             padding_mask = None
-        # else:
-        #     print(padding_mask)
-        #     print('Padding exists')
 
         if task_embedding is not None:
             if len(list(task_embedding.shape)) == 1:
                 task_embedding = task_embedding.unsqueeze(0)
 
-            if self.task_emb_cond_type == 'token':
-                if task_embedding.shape[0] == 1:
-                    bs = x.shape[0]
-                    task_embedding = task_embedding.expand(bs, -1)
-                if self.task_emb_size != self.embedding_dim:
-                    task_embedding = self.task_emb_project(task_embedding)
-                x = torch.cat((x, task_embedding.unsqueeze(1)), dim=1)
-                # This is done so that the padding mask is of the right size
-                tokens = torch.cat((tokens, tokens[:, -1:]), dim=1)
-            elif self.task_emb_cond_type == 'input_add':
-                x += task_embedding.unsqueeze(1)
-            elif self.task_emb_cond_type == 'cls_token':
-                if task_embedding.shape[0] == 1:
-                    bs = x.shape[0]
-                    task_embedding = task_embedding.expand(bs, -1)
-                if self.task_emb_size != self.embedding_dim:
-                    task_embedding = self.task_emb_project(task_embedding)
-                task_embedding = task_embedding.unsqueeze(1)
-                if cls_mask is None:
-                    x = torch.cat((task_embedding, x[:, 1:]), dim=1)
+            if task_embedding.shape[0] == 1:
+                bs = x.shape[0]
+                task_embedding = task_embedding.expand(bs, -1)
+            if self.task_emb_size != self.embedding_dim:
+                task_embedding = self.task_emb_project(task_embedding)
+            task_embedding = task_embedding.unsqueeze(1)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)
@@ -232,6 +215,12 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                 x = cls_mask * task_embedding + (1 - cls_mask) * x
             else:
                 x = cls_embeddings + (1 - cls_mask) * x
+
+        if task_embedding is not None:
+            if cls_mask is None:
+                x = torch.cat((task_embedding, x), dim=1)
+            if padding_mask is not None:
+                padding_mask = torch.cat((padding_mask[:, :1], padding_mask), dim=1)
 
         if self.emb_layer_norm is not None:
             x = self.emb_layer_norm(x)

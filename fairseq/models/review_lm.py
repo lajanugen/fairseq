@@ -135,6 +135,10 @@ class LMClassifier(nn.Module):
            self_attn_mask=attn_mask)
 
        output = output[-1].transpose(0, 1)
+
+       if task_embedding is not None:
+         # Ignore task embedding time-step
+         output = output[:, 1:]
        rep_size = output.shape[-1]
        output = output.contiguous().view(-1, rep_size)
 
@@ -324,7 +328,6 @@ class FairseqReviewLM(BaseFairseqModel):
             # print('\n\nReviews for product {}:'.format(i))
             for review in reviews:
                 # review_txt = self.task.vocab.string(review)
-                # print(review)
                 # print(' - {}'.format(review_txt))
                 task_id.append(i)
                 review = pad_review_to_max_len(review, self.max_seq_len, self.task.vocab.pad())
@@ -341,8 +344,6 @@ class FairseqReviewLM(BaseFairseqModel):
 
         targets = src_tokens.cuda()
         src_tokens = torch.cat((bos_tensor, src_tokens[:, :-1]), dim=1).cuda()
-
-        attn_mask = subsequent_mask(self.max_seq_len)
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
@@ -382,10 +383,13 @@ class FairseqReviewLM(BaseFairseqModel):
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
             task_embedding = task_embeddings(task_id)
+            attn_mask = subsequent_mask(self.max_seq_len + 1)
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
+            attn_mask = subsequent_mask(self.max_seq_len + 1)
         else:
             task_embedding = None
+            attn_mask = subsequent_mask(self.max_seq_len)
 
         if 'meta' in self.training_mode:
 
