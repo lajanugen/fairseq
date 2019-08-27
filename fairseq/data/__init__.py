@@ -36,6 +36,7 @@ from .sharded_dataset import ShardedDataset
 from .sort_dataset import SortDataset
 from .strip_token_dataset import StripTokenDataset
 from .subsample_dataset import SubsampleDataset
+from .subset_dataset import SubsetDataset
 from .token_block_dataset import TokenBlockDataset
 from .transform_eos_dataset import TransformEosDataset
 from .transform_eos_lang_pair_dataset import TransformEosLangPairDataset
@@ -88,6 +89,7 @@ __all__ = [
     'SortDataset',
     'StripTokenDataset',
     'SubsampleDataset',
+    'SubsetDataset',
     'TokenBlockDataset',
     'TransformEosDataset',
     'TransformEosLangPairDataset',

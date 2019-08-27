@@ -19,6 +19,7 @@ from fairseq.data import (
     PadDataset,
     SortDataset,
     TokenBlockDataset,
+    SubsetDataset
 )
 from fairseq.tasks import FairseqTask, register_task
 
@@ -72,6 +73,8 @@ class ReviewTask(FairseqTask):
         self.vocab = vocab
         self.no_training = args.no_training
         self.eval_task_id = args.eval_task_id
+        self.train_unseen_task = args.train_unseen_task
+        self.dataset_size = {}
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -89,7 +92,11 @@ class ReviewTask(FairseqTask):
         data_path = paths[epoch % len(paths)]
 
         # e.g., /path/to/data/train.{bin,idx}
-        split_path = os.path.join(data_path, split)
+        if self.train_unseen_task:
+            split_path = os.path.join(data_path, 'test-' + split)
+        else:
+            split_path = os.path.join(data_path, split)
+
         dataset = data_utils.load_indexed_dataset(split_path, self.vocab, self.args.dataset_impl)
         if dataset is None:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, split_path))
@@ -109,6 +116,13 @@ class ReviewTask(FairseqTask):
             # a single document.
             break_mode='complete_doc',
         )
+
+        if self.train_unseen_task:
+          self.dataset_size[split] = len(dataset)
+          print("Data size %s: %d" % (split, len(dataset)))
+          if ('train' in self.dataset_size) and ('valid' in self.dataset_size):
+            assert self.dataset_size['train'] == self.dataset_size['valid']
+          dataset = SubsetDataset(dataset, self.eval_task_id)
 
         # prepend a beginning of sentence token (<s>) to each sample
         if self.args.add_bos_token:
@@ -167,6 +181,7 @@ class ReviewTask(FairseqTask):
         outputs = model(**sample['net_input'])
 
         loss = outputs['post_loss_train']
+        outputs['nll_loss'] = loss
 
         # sample_size = sample['target'].size(0)
         # sample_size = 1
@@ -190,7 +205,6 @@ class ReviewTask(FairseqTask):
     def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
         model.train()
         optimizer.zero_grad()
-        self.sample_num_tasks = 8
         loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
         if ignore_grad:
             loss *= 0
