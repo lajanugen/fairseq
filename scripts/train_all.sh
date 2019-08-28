@@ -13,3 +13,5 @@ export NUMGRADS=10
 export EXP_NAME=$EXP_NAME
 export MODE=$MODE
 export MDL=$MDL
+
+./scripts/train_lm.sh

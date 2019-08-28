@@ -14,3 +14,5 @@ export LOAD=$LOAD
 export MODE=$MODE
 export FINETUNE=$FINETUNE
 export MDL=$MDL
+
+./scripts/eval_lm.sh
