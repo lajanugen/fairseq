@@ -287,7 +287,7 @@ class FairseqReviewLM(BaseFairseqModel):
                 self.max_tasks, self.task_emb_size)
                 # self.num_test_tasks, self.task_emb_size)
 
-        elif 'meta' in self.training_mode and self.training_mode != 'meta_bprop':
+        elif 'meta' in self.training_mode:
             # Train
             self.task_embeddings = nn.Embedding(
                 self.max_tasks, self.task_emb_size)
@@ -380,16 +380,18 @@ class FairseqReviewLM(BaseFairseqModel):
             else:
                 task_embeddings = self.task_embeddings
 
+        if self.training_mode == 'task_agnostic':
+            attn_mask = subsequent_mask(self.max_seq_len)
+        else:
+            attn_mask = subsequent_mask(self.max_seq_len + 1)
+
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
             task_embedding = task_embeddings(task_id)
-            attn_mask = subsequent_mask(self.max_seq_len + 1)
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
-            attn_mask = subsequent_mask(self.max_seq_len + 1)
         else:
             task_embedding = None
-            attn_mask = subsequent_mask(self.max_seq_len)
 
         if 'meta' in self.training_mode:
 
@@ -465,9 +467,6 @@ class FairseqReviewLM(BaseFairseqModel):
         return outputs
 
     def upgrade_state_dict_named(self, state_dict, name):
-        if "task_embeddings.weight" in state_dict:
-            assert state_dict["task_embeddings.weight"].shape[0] == self.num_train_tasks
-            mean_task_emb = state_dict["task_embeddings.weight"].mean(0)
 
         for k in list(state_dict.keys()):
             print(k)
@@ -475,18 +474,9 @@ class FairseqReviewLM(BaseFairseqModel):
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        if self.task_emb_init == 'mean':
-            print('Note: Initializing task embedding with mean')
-            state_dict['task_embedding_init'] = mean_task_emb
-        elif self.task_emb_init == 'random':
-            print('Note: Initializing task embedding randomly')
-            state_dict['task_embedding_init'] = torch.randn(self.task_emb_size)
-        elif self.task_emb_init == 'zeros':
+        if self.training_mode != 'task_agnostic':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
-        elif self.task_emb_init == 'uniform':
-            print('Note: Initializing task embedding with random uniform')
-            state_dict['task_embedding_init'] = torch.FloatTensor(self.task_emb_size).uniform_()
 
         return state_dict
 

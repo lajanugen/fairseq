@@ -11,7 +11,7 @@ NUM_GRAD_UPDATES=100
 EVAL_TASK_ID=0
 TASK_EMB_SIZE=128
 TASK_EMB_INIT=mean
-MAX_EPOCH=100
+MAX_EPOCH=10
 TENSORBOARD=0
 LOGLOSS=0
 META_NUM_EX=4
@@ -27,7 +27,7 @@ VOCAB_SIZE=100
 MAX_TASKS=2000
 NUM_TRAIN_TASKS=500
 NUM_TEST_TASKS=64
-MAX_SEQ_LEN=256
+MAX_SEQ_LEN=66
 
 while [[ $# -gt 0 ]]
 do
@@ -131,8 +131,11 @@ fi
 ARGS="$ARGS --num_grad_updates $NUM_GRAD_UPDATES"
 
 if [ $CLUSTER == "0" ]; then
-  RUN="python fairseq_cli/train.py"
-  # RUN="python train_multiple_tasks.py"
+  if [ $EVAL == "0" ]; then
+    RUN="python fairseq_cli/train.py"
+	else
+    RUN="python train_multiple_tasks.py"
+	fi
 else
   if [ $EVAL == "0" ]; then
     RUN="srun --nodes=1 --gres=gpu:1 --partition=learnfair --time=1200 python fairseq_cli/train.py"
@@ -163,7 +166,7 @@ ARGS="$ARGS \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
 	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
-	--max-tokens 1025 \
+	--max-tokens 4096 \
 	--optimizer adam \
 	--encoder_type transformer \
 	--num_test $UNSEEN_NUM_TEST \
@@ -177,7 +180,8 @@ ARGS="$ARGS \
 	--clip-norm 5 \
 	--reset-dataloader \
 	--task_emb_init $TASK_EMB_INIT \
-	--z_lr $ZLR"
+	--z_lr $ZLR \
+	--disable-validation"
 #	--supervision_at_end \
 #	--add-bos-token \
 

@@ -1,21 +1,6 @@
-# Feed-forward model, multi-tasking
-EXP_NAME=ff_lm
-MODE=single_task
-
-MDL=default
-
-## DEFALUTS ##
-export CKPT_DIR=./checkpoints
-DBG_MODE=yes
-LAYERS=4
-ZSIZE=128
-NUMGRADS=25
-
-export CUDA_VISIBLE_DEVICES=0
-
 RUN="./scripts/run_lm.sh"
 
-ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -l $LAYERS --tb --max-epoch 100"
+ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -l $LAYERS --tb --max-epoch 10 --maxtasks 100"
 
 if [ $DBG_MODE == "no" ]; then
     ARGS="$ARGS -c"
