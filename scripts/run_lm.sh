@@ -18,6 +18,7 @@ META_NUM_EX=4
 LAYERS=1
 NO_TRAINING=0
 EVAL=0
+DISABLE_VALID=0
 
 SEEN_NUM_TRAIN=500
 UNSEEN_NUM_TRAIN=500
@@ -109,6 +110,9 @@ case $key in
     -l)
     LAYERS=$2
     shift; shift; ;;
+    --novalid)
+    DISABLE_VALID=1
+    shift; ;;
 esac
 done
 
@@ -124,6 +128,8 @@ if [ "$TRAIN_ONLY_Z" == "0" ]; then ARGS="$ARGS --tune_model_params"; fi
 if [ "$NO_TRAINING" == "1" ]; then ARGS="$ARGS --no_training"; fi
 
 if [ "$TENSORBOARD" == "1" ]; then ARGS="$ARGS --tensorboard-logdir $CKPT_DIR/$EXP_NAME"; fi
+
+if [ "$DISABLE_VALID" == "1" ]; then ARGS="$ARGS --disable-validation"; fi
 	
 if [ ! -z $INIT_MDL ]; then
   ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"
@@ -180,10 +186,7 @@ ARGS="$ARGS \
 	--clip-norm 5 \
 	--reset-dataloader \
 	--task_emb_init $TASK_EMB_INIT \
-	--z_lr $ZLR \
-	--disable-validation"
-#	--supervision_at_end \
-#	--add-bos-token \
+	--z_lr $ZLR"
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 

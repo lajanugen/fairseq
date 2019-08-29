@@ -7,7 +7,7 @@ if [ $DBG_MODE == "no" ]; then
 fi
 
 if [[ $MODE == *"meta"* ]]; then
-    ARGS="$ARGS --zlr 1e-2 --zsize $ZSIZE --numgrads $NUMGRADS"
+    ARGS="$ARGS --zlr 1e-2 --zsize $ZSIZE --numgrads $NUMGRADS --novalid"
 fi
 
 echo $EXP_NAME
