@@ -11,13 +11,14 @@ NUM_GRAD_UPDATES=100
 EVAL_TASK_ID=0
 TASK_EMB_SIZE=128
 TASK_EMB_INIT=mean
-MAX_EPOCH=100
+MAX_EPOCH=10
 TENSORBOARD=0
 LOGLOSS=0
 META_NUM_EX=4
 LAYERS=1
 NO_TRAINING=0
 EVAL=0
+DISABLE_VALID=0
 
 SEEN_NUM_TRAIN=500
 UNSEEN_NUM_TRAIN=500
@@ -27,7 +28,7 @@ VOCAB_SIZE=100
 MAX_TASKS=2000
 NUM_TRAIN_TASKS=500
 NUM_TEST_TASKS=64
-MAX_SEQ_LEN=256
+MAX_SEQ_LEN=66
 
 while [[ $# -gt 0 ]]
 do
@@ -109,6 +110,9 @@ case $key in
     -l)
     LAYERS=$2
     shift; shift; ;;
+    --novalid)
+    DISABLE_VALID=1
+    shift; ;;
 esac
 done
 
@@ -124,6 +128,8 @@ if [ "$TRAIN_ONLY_Z" == "0" ]; then ARGS="$ARGS --tune_model_params"; fi
 if [ "$NO_TRAINING" == "1" ]; then ARGS="$ARGS --no_training"; fi
 
 if [ "$TENSORBOARD" == "1" ]; then ARGS="$ARGS --tensorboard-logdir $CKPT_DIR/$EXP_NAME"; fi
+
+if [ "$DISABLE_VALID" == "1" ]; then ARGS="$ARGS --disable-validation"; fi
 	
 if [ ! -z $INIT_MDL ]; then
   ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"
@@ -131,8 +137,11 @@ fi
 ARGS="$ARGS --num_grad_updates $NUM_GRAD_UPDATES"
 
 if [ $CLUSTER == "0" ]; then
-  RUN="python fairseq_cli/train.py"
-  # RUN="python train_multiple_tasks.py"
+  if [ $EVAL == "0" ]; then
+    RUN="python fairseq_cli/train.py"
+	else
+    RUN="python train_multiple_tasks.py"
+	fi
 else
   if [ $EVAL == "0" ]; then
     RUN="srun --nodes=1 --gres=gpu:1 --partition=learnfair --time=1200 python fairseq_cli/train.py"
@@ -163,7 +172,7 @@ ARGS="$ARGS \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
 	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
-	--max-tokens 1025 \
+	--max-tokens 4096 \
 	--optimizer adam \
 	--encoder_type transformer \
 	--num_test $UNSEEN_NUM_TEST \
@@ -178,8 +187,6 @@ ARGS="$ARGS \
 	--reset-dataloader \
 	--task_emb_init $TASK_EMB_INIT \
 	--z_lr $ZLR"
-#	--supervision_at_end \
-#	--add-bos-token \
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 

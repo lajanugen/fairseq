@@ -1,17 +1,3 @@
-# Feed-forward model, multi-tasking
-MODE=single_task
-FINETUNE=yes
-
-MDL=default
-
-## DEFALUTS ##
-export CKPT_DIR=/home/llajan/b6/fsl
-DBG_MODE=yes
-LAYERS=4
-ZSIZE=128
-
-export CUDA_VISIBLE_DEVICES=4
-
 echo $LOAD
 
 INIT_MDL=$LOAD/checkpoint1.pt
@@ -22,7 +8,7 @@ EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
-ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -f -l $LAYERS"
+ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -f -l $LAYERS --max-epoch 100"
 
 if [ $FINETUNE == "no" ]; then
     ARGS="$ARGS --no-training"
@@ -40,6 +26,6 @@ fi
 
 echo $ARGS
 
-$RUN $ARGS -t 0 --eval
+$RUN $ARGS --eval
 
 rm /checkpoint/llajan/$EXP_NAME -rf
