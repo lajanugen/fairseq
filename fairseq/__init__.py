@@ -6,6 +6,9 @@
 __all__ = ['pdb']
 __version__ = '0.8.0'
 
+import pyximport
+pyximport.install()
+
 import fairseq.criterions  # noqa
 import fairseq.models  # noqa
 import fairseq.modules  # noqa

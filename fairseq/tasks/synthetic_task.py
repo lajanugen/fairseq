@@ -5,6 +5,8 @@
 
 import os
 
+from collections import OrderedDict
+
 import numpy as np
 import torch
 
@@ -20,10 +22,9 @@ class SyntheticLMTask(ReviewTask):
 
     @staticmethod
     def add_args(parser):
+        super(SyntheticLMTask, SyntheticLMTask).add_args(parser)
         # Add some command-line arguments for specifying where the data is
         # located and the maximum supported input length.
-        parser.add_argument('--load_tasks_file', default='', type=str,
-                            help='Tasks file.')
         parser.add_argument('--max_tasks', default=5, type=int,
                             help='Max tasks to precompute')
         parser.add_argument('--max_seq_len', default=16, type=int,
@@ -32,8 +33,8 @@ class SyntheticLMTask(ReviewTask):
     @classmethod
     def setup_task(cls, args, **kwargs):
         vocab = Dictionary()
-        for v in range(args.vocab_size)
-            vocab.add_symbol(v)
+        for v in range(args.vocab_size):
+            vocab.add_symbol(str(v))
         print('| dictionary: {} types'.format(len(vocab)))
 
         return cls(args, vocab)
@@ -52,7 +53,6 @@ class SyntheticLMTask(ReviewTask):
 
         task_generator = TaskGenerator(
             self.max_tasks,
-            self.num_train,
             self.max_seq_len,
             self.vocab_size)
         task_descriptions = task_generator.load_tasks(args.load_tasks_file)
@@ -88,7 +88,7 @@ class SyntheticLMTask(ReviewTask):
             self.examples = {'train': train_examples, 'valid': val_examples}
 
 
-    def construct_data(self, examples):
+    def construct_data(self, task_id, examples):
 
         input_sentences, output_sentences, lengths = [], [], [] 
 
@@ -98,11 +98,14 @@ class SyntheticLMTask(ReviewTask):
             assert len(orig_seq) == self.max_seq_len
             assert len(transform_seq) == self.max_seq_len
 
-            orig_seq_enc = [self.index(s) for s in input_seq]
-            transform_seq_enc = [self.index(s) for s in input_seq]
+            orig_seq = map(str, orig_seq)
+            transform_seq = map(str, transform_seq)
+            
+            orig_seq_enc = [self.vocab.index(s) for s in orig_seq]
+            transform_seq_enc = [self.vocab.index(s) for s in transform_seq]
 
-            input_sentence = orig_seq_enc + transform_seq_enc + [self.vocab.eos()]
-            output_sentence = [self.vocab.pad()] * len(orig_seq_enc) + transform_seq_enc + [self.vocab.eos()]
+            input_sequence = orig_seq_enc + transform_seq_enc + [self.vocab.eos()]
+            output_sequence = [self.vocab.pad()] * len(orig_seq_enc) + transform_seq_enc + [self.vocab.eos()]
  
             # prepend a beginning of sentence token (<s>) to each sample
             if self.args.add_bos_token:
@@ -110,6 +113,10 @@ class SyntheticLMTask(ReviewTask):
                 output_sequence = [self.vocab.pad()] + output_sequence
 
             assert len(input_sequence) == len(output_sequence)
+
+            # prepend task_id
+            input_sequence = [task_id] + input_sequence
+            output_sequence = [task_id] + output_sequence
            
             input_sentences.append(torch.LongTensor(input_sequence))
             output_sentences.append(torch.LongTensor(output_sequence))
@@ -122,7 +129,7 @@ class SyntheticLMTask(ReviewTask):
         if self.train_unseen_task:
             assert self.eval_task_id < self.num_test_tasks
 
-            input_sentences, output_sentences, lengths = self.construct_data(examples[split][task_id])
+            input_sentences, output_sentences, lengths = self.construct_data(self.eval_task_id, self.examples[split][self.eval_task_id])
 
             self.datasets[split] = LanguagePairDataset(
                 src=input_sentences,
@@ -138,11 +145,11 @@ class SyntheticLMTask(ReviewTask):
 
         else:
             dataset_map = OrderedDict()
-            split_examples = examples[split]
+            split_examples = self.examples[split]
             num_tasks = len(split_examples)
 
             for task_id in range(num_tasks):
-                input_sentences, output_sentences, lengths = self.construct_data(split_examples[task_id])
+                input_sentences, output_sentences, lengths = self.construct_data(task_id, split_examples[task_id])
 
                 dataset_map[task_id] = LanguagePairDataset(
                     src=input_sentences,

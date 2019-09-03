@@ -239,10 +239,10 @@ class FairseqReviewLM(BaseFairseqModel):
                             help='Number of examples in task description.')
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
-        parser.add_argument('--max_seq_len', default=128, type=int,
-                            help='Maximum sequence length.')
-        parser.add_argument('--max_tasks', default=16, type=int,
-                            help='Maximum number of tasks.')
+#        parser.add_argument('--max_seq_len', default=128, type=int,
+#                            help='Maximum sequence length.')
+#        parser.add_argument('--max_tasks', default=16, type=int,
+#                            help='Maximum number of tasks.')
 
     @classmethod
     def build_model(cls, args, task):
@@ -261,7 +261,7 @@ class FairseqReviewLM(BaseFairseqModel):
         dictionary = task.vocab
         self.padding_idx = dictionary.pad()
         self.vocab_size = dictionary.__len__()
-        self.max_tasks = args.max_tasks
+        self.max_tasks = task.max_tasks
         self.encoder_type = args.encoder_type
         self.encoder_embed_dim = args.encoder_embed_dim
         self.training_mode = args.training_mode
@@ -272,32 +272,32 @@ class FairseqReviewLM(BaseFairseqModel):
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
         self.reinit_meta_opt = args.reinit_meta_opt
-        # self.num_train_tasks = task.num_train_tasks
-        # self.num_test_tasks = task.num_test_tasks
+        self.num_train_tasks = task.num_train_tasks
+        self.num_test_tasks = task.num_test_tasks
         self.task_emb_init = args.task_emb_init
         self.num_task_examples = args.num_task_examples
-        self.max_seq_len = args.max_seq_len
-        # self.train_unseen_task = task.train_unseen_task
+        self.max_seq_len = task.max_seq_len
+        self.train_unseen_task = task.train_unseen_task
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
-                self.max_tasks, self.task_emb_size)
-                # self.num_train_tasks, self.task_emb_size)
+                # self.max_tasks, self.task_emb_size)
+                self.num_train_tasks, self.task_emb_size)
             self.task_embeddings_eval = nn.Embedding(
-                self.max_tasks, self.task_emb_size)
-                # self.num_test_tasks, self.task_emb_size)
+                # self.max_tasks, self.task_emb_size)
+                self.num_test_tasks, self.task_emb_size)
 
         elif 'meta' in self.training_mode:
             # Train
             self.task_embeddings = nn.Embedding(
-                self.max_tasks, self.task_emb_size)
-                # self.num_train_tasks, self.task_emb_size)
+                # self.max_tasks, self.task_emb_size)
+                self.num_train_tasks, self.task_emb_size)
             self.z_optimizer = optim.Adam(
                 self.task_embeddings.parameters(), lr=self.z_lr)
             # Eval
             self.task_embeddings_eval = nn.Embedding(
-                self.max_tasks, self.task_emb_size)
-                # self.num_test_tasks, self.task_emb_size)
+                # self.max_tasks, self.task_emb_size)
+                self.num_test_tasks, self.task_emb_size)
             self.z_optimizer_eval = optim.Adam(
                 self.task_embeddings_eval.parameters(), lr=self.z_lr)
 
@@ -310,67 +310,74 @@ class FairseqReviewLM(BaseFairseqModel):
         self,
         src_tokens,
         src_lengths,
+        targets,
+        src_all_tokens=None,
+        num_tasks=None,
         split_data=False,
         optimizer=None,
         mode='train'
     ):
 
-        task_id = []
-        all_reviews = []
+#        task_id = []
+#        all_reviews = []
+#
+#        input_tokens = src_tokens.cpu()
+#        for i in range(input_tokens.size(0)):
+#            review_boundaries = input_tokens[i].eq(self.task.vocab.eos()).nonzero()
+#            review_boundaries += 1 # Include eos
+#            reviews = np.split(input_tokens[i], review_boundaries)
+#            # reviews = reviews[1:]  # ignore the first one, it's empty because input_tokens begins with </s>
+#            reviews = reviews[:-1]
+#            # print('\n\nReviews for product {}:'.format(i))
+#            for review in reviews:
+#                # review_txt = self.task.vocab.string(review)
+#                # print(' - {}'.format(review_txt))
+#                task_id.append(i)
+#                review = pad_review_to_max_len(review, self.max_seq_len, self.task.vocab.pad())
+#                all_reviews.append(review)
+#            # print('%.2f %.2f' % (np.mean(review_lens), np.max(review_lens)))
+#            # for review in reviews:
+#            #     print(len(review))
+#            # print(len(reviews))
 
-        input_tokens = src_tokens.cpu()
-        for i in range(input_tokens.size(0)):
-            review_boundaries = input_tokens[i].eq(self.task.vocab.eos()).nonzero()
-            review_boundaries += 1 # Include eos
-            reviews = np.split(input_tokens[i], review_boundaries)
-            # reviews = reviews[1:]  # ignore the first one, it's empty because input_tokens begins with </s>
-            reviews = reviews[:-1]
-            # print('\n\nReviews for product {}:'.format(i))
-            for review in reviews:
-                # review_txt = self.task.vocab.string(review)
-                # print(' - {}'.format(review_txt))
-                task_id.append(i)
-                review = pad_review_to_max_len(review, self.max_seq_len, self.task.vocab.pad())
-                all_reviews.append(review)
-            # print('%.2f %.2f' % (np.mean(review_lens), np.max(review_lens)))
-            # for review in reviews:
-            #     print(len(review))
-            # print(len(reviews))
-
-        task_id = torch.LongTensor(task_id).cuda()
-        src_tokens = torch.stack(all_reviews, 0)
         bs = src_tokens.shape[0]
+#        task_id = torch.LongTensor(range(bs)).cuda()
+        task_id = src_tokens[:, 0]
+#        src_tokens = torch.stack(all_reviews, 0)
         bos_tensor = torch.LongTensor(bs, 1).fill_(self.task.vocab.bos())
 
-        targets = src_tokens.cuda()
-        src_tokens = torch.cat((bos_tensor, src_tokens[:, :-1]), dim=1).cuda()
+        # targets = src_tokens.cuda()
+        targets = targets[:, 1:]
+        src_tokens = torch.cat((bos_tensor, src_tokens.cpu()[:, 1:-1]), dim=1).cuda()
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
         loss_mask = loss_mask.cuda()
 
-        # if num_tasks:
-        #     num_ex_per_task = bs // num_tasks
+        if num_tasks:
+            num_ex_per_task = bs // num_tasks
 
-        # if split_data:
-        #     if self.train_unseen_task:
-        #         split_ratio = 0.5
-        #     else:
-        #         split_ratio = 0.7
+        if split_data:
+            if self.train_unseen_task:
+                split_ratio = 0.5
+            else:
+                split_ratio = 0.7
 
-        #     if num_tasks:
-        #         N_train = int(split_ratio * num_ex_per_task)
-        #         train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
-        #         train_mask = train_mask.view(-1)
-        #     else:
-        #         N_train = int(split_ratio * bs)
-        #         train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
-        #     test_mask = 1 - train_mask
-        # else:
-        #     train_mask = torch.ones(bs).cuda()
-        #     test_mask = train_mask
+            if num_tasks:
+                N_train = int(split_ratio * num_ex_per_task)
+                train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
+                train_mask = train_mask.view(-1)
+            else:
+                N_train = int(split_ratio * bs)
+                train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
+            test_mask = 1 - train_mask
+        else:
+            train_mask = torch.ones(bs).cuda()
+            test_mask = train_mask
 
-        train_mask, test_mask = None, None
+        # train_mask, test_mask = None, None
+        train_mask = train_mask.repeat(1, src_lengths[0] - 1)
+        test_mask = test_mask.repeat(1, src_lengths[0] - 1)
 
         outputs = {}
 
@@ -381,9 +388,11 @@ class FairseqReviewLM(BaseFairseqModel):
                 task_embeddings = self.task_embeddings
 
         if self.training_mode == 'task_agnostic':
-            attn_mask = subsequent_mask(self.max_seq_len)
+          #  attn_mask = subsequent_mask(self.max_seq_len)
+            attn_mask = subsequent_mask(src_lengths[0] - 1)
         else:
-            attn_mask = subsequent_mask(self.max_seq_len + 1)
+          #  attn_mask = subsequent_mask(self.max_seq_len + 1)
+            attn_mask = subsequent_mask(src_lengths[0])
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':

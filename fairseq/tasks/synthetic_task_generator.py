@@ -5,12 +5,11 @@ import itertools
 
 class TaskGenerator():
 
-    def __init__(self, max_tasks, max_samples, seqlen, vocab_size, logdir=None):
+    def __init__(self, max_tasks, seqlen, vocab_size, logdir=None):
 
         self.vocab_size = vocab_size
         self.seqlen = seqlen
         self.max_tasks = max_tasks
-        self.max_samples = max_samples
 
         self.logdir = logdir
 
@@ -117,6 +116,12 @@ class TaskGenerator():
 
         return ' -> '.join([' '.join(transform), ' '.join(subseq), ' '.join(reorder)])
 
+    def load_tasks(self, tasks_file):
+        with open(tasks_file, 'r') as f:
+            lines = f.readlines()
+            lines = [line.strip() for line in lines]
+        return lines
+
 
     def generate_data(self, tasks, num_train, num_test):
 
@@ -127,10 +132,8 @@ class TaskGenerator():
         num_examples = num_train + 2 * num_test
 
         for task in tasks:
-            print(task)
-
-            data = self.generate_data_single_task(task, num_examples, rng)
-            
+            data = self.generate_data_single_task(task, num_examples, rng, allow_fail=False)
+         
             assert len(data) == num_examples
 
             train = data[:num_train]
@@ -141,26 +144,10 @@ class TaskGenerator():
 
             all_data.append((train, val, test))
 
-            print('train')
-            for in_seq, out_seq in train:
-                in_str = ' '.join(map(str, in_seq))
-                out_str = ' '.join(map(str, out_seq))
-                print(' -> '.join([in_str, out_str]))
-            print('val')
-            for in_seq, out_seq in val:
-                in_str = ' '.join(map(str, in_seq))
-                out_str = ' '.join(map(str, out_seq))
-                print(' -> '.join([in_str, out_str]))
-            print('test')
-            for in_seq, out_seq in test:
-                in_str = ' '.join(map(str, in_seq))
-                out_str = ' '.join(map(str, out_seq))
-                print(' -> '.join([in_str, out_str]))
-
         return all_data
 
 
-    def generate_data_single_task(self, task, num_examples, rng):
+    def generate_data_single_task(self, task, num_examples, rng, allow_fail=True):
 
         transform, subseq, reorder = task.split(' -> ')
         transform = transform.split()
@@ -185,7 +172,7 @@ class TaskGenerator():
         data = []
         fail_count = 0
         while True:
-            if fail_count >= 1000:
+            if allow_fail and fail_count >= 1000:
                 return []
 
             x = list(rng.randint(self.vocab_size, size=(self.seqlen,)))
