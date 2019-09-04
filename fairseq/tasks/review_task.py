@@ -223,7 +223,7 @@ class ReviewTask(FairseqTask):
                 loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
         else:
             with torch.no_grad():
-                loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
+                loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
 
         return loss, sample_size, logging_output
 

@@ -140,7 +140,7 @@ if [ $CLUSTER == "0" ]; then
   if [ $EVAL == "0" ]; then
     RUN="python fairseq_cli/train.py"
 	else
-    RUN="python train_multiple_tasks.py"
+    RUN="python train_multiple_tasks_v2.py"
 	fi
 else
   if [ $EVAL == "0" ]; then

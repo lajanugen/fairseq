@@ -8,7 +8,7 @@ EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
-ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -f -l $LAYERS --max-epoch 100"
+ARGS="-e $EXP_NAME -m $MODE --mdl $MDL -f -l $LAYERS --max-epoch 50"
 
 if [ $FINETUNE == "no" ]; then
     ARGS="$ARGS --no-training"
@@ -28,4 +28,4 @@ echo $ARGS
 
 $RUN $ARGS --eval
 
-rm /checkpoint/llajan/$EXP_NAME -rf
+rm $CKPT_DIR/$EXP_NAME -rf

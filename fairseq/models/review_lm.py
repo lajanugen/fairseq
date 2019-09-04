@@ -318,13 +318,25 @@ class FairseqReviewLM(BaseFairseqModel):
         task_id = []
         all_reviews = []
 
+        train_mask = []
+
         input_tokens = src_tokens.cpu()
         for i in range(input_tokens.size(0)):
             review_boundaries = input_tokens[i].eq(self.task.vocab.eos()).nonzero()
             review_boundaries += 1 # Include eos
             reviews = np.split(input_tokens[i], review_boundaries)
+
             # reviews = reviews[1:]  # ignore the first one, it's empty because input_tokens begins with </s>
             reviews = reviews[:-1]
+            num_reviews  = len(reviews)
+
+            assert num_reviews > 1
+            if split_data:
+                num_train = int(0.5 * num_reviews)
+                num_test = num_reviews - num_train
+                train_mask.extend([1] * num_train)
+                train_mask.extend([0] * num_test)
+
             # print('\n\nReviews for product {}:'.format(i))
             for review in reviews:
                 # review_txt = self.task.vocab.string(review)
@@ -349,6 +361,12 @@ class FairseqReviewLM(BaseFairseqModel):
         loss_mask = 1 - pad_mask.float()
         loss_mask = loss_mask.cuda()
 
+        if split_data:
+            train_mask = torch.Tensor(train_mask).view(-1, 1).repeat(1, self.max_seq_len).cuda()
+            test_mask = 1 - train_mask
+        else:
+            train_mask, test_mask = None, None
+
         # if num_tasks:
         #     num_ex_per_task = bs // num_tasks
 
@@ -370,7 +388,6 @@ class FairseqReviewLM(BaseFairseqModel):
         #     train_mask = torch.ones(bs).cuda()
         #     test_mask = train_mask
 
-        train_mask, test_mask = None, None
 
         outputs = {}
 
