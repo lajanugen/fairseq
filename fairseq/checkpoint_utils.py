@@ -130,6 +130,47 @@ def load_checkpoint(args, trainer):
     return extra_state, epoch_itr
 
 
+def load_checkpoint_from_state(args, trainer, state):
+    """Load a checkpoint and restore the training iterator."""
+    # only one worker should attempt to create the required dir
+    if args.distributed_rank == 0:
+        os.makedirs(args.save_dir, exist_ok=True)
+
+    if args.restore_file == 'checkpoint_last.pt':
+        checkpoint_path = os.path.join(args.save_dir, 'checkpoint_last.pt')
+    else:
+        checkpoint_path = args.restore_file
+
+    extra_state = trainer.load_checkpoint_from_state(
+        state,
+        args.reset_optimizer,
+        args.reset_lr_scheduler,
+        eval(args.optimizer_overrides),
+        reset_meters=args.reset_meters,
+        filename=args.restore_file
+    )
+
+    if (
+        extra_state is not None
+        and 'best' in extra_state
+        and not args.reset_optimizer
+        and not args.reset_meters
+    ):
+        save_checkpoint.best = extra_state['best']
+
+    if extra_state is not None and not args.reset_dataloader:
+        # restore iterator from checkpoint
+        itr_state = extra_state['train_iterator']
+        epoch_itr = trainer.get_train_iterator(epoch=itr_state['epoch'])
+        epoch_itr.load_state_dict(itr_state)
+    else:
+        epoch_itr = trainer.get_train_iterator(epoch=0)
+
+    trainer.lr_step(epoch_itr.epoch)
+
+    return extra_state, epoch_itr
+
+
 def load_checkpoint_to_cpu(path, arg_overrides=None):
     """Loads a checkpoint to CPU (with upgrading for backward compatibility)."""
     state = torch.load(
