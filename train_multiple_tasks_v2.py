@@ -358,33 +358,40 @@ def master_main():
     sys.stdout = f
 
     parser = options.get_training_parser()
+    parser.add_argument("--fast-eval", action="store_true", help="Fast eval mode.")
+    parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
     args = options.parse_args_and_arch(parser)
-    restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-    best_val = float('inf')
+    if parser.fast_eval:
+        best_num_iter = parser.eval_num_iter
+    else:
+        restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-    for ckpt in range(1, 11):
-        args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
-        print(args.restore_file)
-        print(os.path.exists(args.restore_file))
-        assert os.path.exists(args.restore_file)
-        state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
+        best_val = float('inf')
 
-        all_stats = []
-        for task in range(16):
-            args.eval_task_id = task
+        for ckpt in range(1, 11):
+            args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
+            print(args.restore_file)
+            print(os.path.exists(args.restore_file))
+            assert os.path.exists(args.restore_file)
+            state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
-            train_stats, valid_stats = cli_main(args, state)
-            all_stats.append((train_stats, valid_stats))
+            all_stats = []
+            for task in range(16):
+                args.eval_task_id = task
 
-        val, best_train, num_iter = cross_validate(all_stats)
+                train_stats, valid_stats = cli_main(args, state)
+                all_stats.append((train_stats, valid_stats))
 
-        if val < best_val:
-            best_val = val
-            best_mdl = (val, best_train, num_iter, ckpt)
+            val, best_train, num_iter = cross_validate(all_stats)
 
-    val, best_train, best_num_iter, best_ckpt = best_mdl
-    args.restore_file = '%s/checkpoint%d.pt' % (restore_path, best_ckpt)
+            if val < best_val:
+                best_val = val
+                best_mdl = (val, best_train, num_iter, ckpt)
+
+        val, best_train, best_num_iter, best_ckpt = best_mdl
+        args.restore_file = '%s/checkpoint%d.pt' % (restore_path, best_ckpt)
+
     assert os.path.exists(args.restore_file)
     state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
@@ -401,8 +408,12 @@ def master_main():
 
     sys.stdout = stdout
 
-    print('test, train, best_val, best_train, best_num_iter, best_ckpt')
-    print('%.2f %.2f %.2f %.2f %d %d' % (test, train, val, best_train, best_num_iter, best_ckpt))
+    if parser.fast_eval:
+        print('test, train, best_num_iter')
+        print('%.2f %.2f %d' % (test, train, best_num_iter))
+    else:
+        print('test, train, best_val, best_train, best_num_iter, best_ckpt')
+        print('%.2f %.2f %.2f %.2f %d %d' % (test, train, val, best_train, best_num_iter, best_ckpt))
 
 
 if __name__ == '__main__':
