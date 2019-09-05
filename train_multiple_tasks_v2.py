@@ -362,8 +362,8 @@ def master_main():
     parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
     args = options.parse_args_and_arch(parser)
 
-    if parser.fast_eval:
-        best_num_iter = parser.eval_num_iter
+    if args.fast_eval:
+        best_num_iter = args.eval_num_iter
     else:
         restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
@@ -408,7 +408,7 @@ def master_main():
 
     sys.stdout = stdout
 
-    if parser.fast_eval:
+    if args.fast_eval:
         print('test, train, best_num_iter')
         print('%.2f %.2f %d' % (test, train, best_num_iter))
     else:

@@ -170,7 +170,7 @@ fi
 ARGS="$ARGS --task review_task --arch review_tf"
 
 ARGS="$ARGS \
-	/tmp/data/ \
+	/home/llajan/b6/amazon_reviews/ \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
 	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
