@@ -42,8 +42,6 @@ def cross_validate(stats):
         task_train_accuracies = [float(train_accs[i]['ppl']) for i in range(len(train_accs))]
         task_val_accuracies = [float(val_accs[i]['ppl']) for i in range(len(val_accs))]
 
-        # if i < num_tasks / 4:
-
         assert len(task_val_accuracies) == num_iter_grid[-1]
 
         for num_iter in num_iter_grid:
@@ -52,27 +50,14 @@ def cross_validate(stats):
         best_train_accuracies.append(min(task_train_accuracies))
         val_accuracies.append(min(task_val_accuracies))
 
-        # else:
-        #     if best_num_iters is None:
-        #         avg_perf_grid = []
-        #         for num_iter in num_iter_grid:
-        #             avg_perf_grid.append(np.mean(num_iter_perf[num_iter]))
-        #         best_num_iters = num_iter_grid[np.argmax(avg_perf_grid)]
-
-        #     train_accuracies.append(task_train_accuracies[best_num_iters - 1])
-        #     test_accuracies.append(task_val_accuracies[best_num_iters - 1])
-
     avg_perf_grid = []
     for num_iter in num_iter_grid:
         avg_perf_grid.append(np.mean(num_iter_perf[num_iter]))
     best_num_iters = num_iter_grid[np.argmin(avg_perf_grid)]
 
-    # test_accuracy = sum(test_accuracies) / len(test_accuracies)
     val_accuracy = sum(val_accuracies) / len(val_accuracies)
-    # train_accuracy = sum(train_accuracies) /len(train_accuracies)
     best_train_accuracy = sum(best_train_accuracies) / len(best_train_accuracies)
 
-    # return test_accuracy, train_accuracy, val_accuracy, best_train_accuracy, best_num_iters
     return val_accuracy, best_train_accuracy, best_num_iters
 
 
@@ -376,7 +361,7 @@ def master_main():
     args = options.parse_args_and_arch(parser)
     restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-    best_val = float('-inf')
+    best_val = float('inf')
 
     for ckpt in range(1, 11):
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
@@ -394,7 +379,7 @@ def master_main():
 
         val, best_train, num_iter = cross_validate(all_stats)
 
-        if val > best_val:
+        if val < best_val:
             best_val = val
             best_mdl = (val, best_train, num_iter, ckpt)
 
