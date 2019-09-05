@@ -130,6 +130,8 @@ if [ "$NO_TRAINING" == "1" ]; then ARGS="$ARGS --no_training"; fi
 if [ "$TENSORBOARD" == "1" ]; then ARGS="$ARGS --tensorboard-logdir $CKPT_DIR/$EXP_NAME"; fi
 
 if [ "$DISABLE_VALID" == "1" ]; then ARGS="$ARGS --disable-validation"; fi
+
+if [ "$FASTEVAL" == "yes" ]; then ARGS="$ARGS --fast-eval --eval-num-iter 10"; fi
 	
 if [ ! -z $INIT_MDL ]; then
   ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"

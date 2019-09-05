@@ -1,6 +1,6 @@
 echo $LOAD
 
-INIT_MDL=$LOAD/checkpoint1.pt
+INIT_MDL=$LOAD/checkpoint10.pt
 
 RUN="./scripts/run_lm.sh"
 
