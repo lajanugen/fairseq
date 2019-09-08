@@ -375,9 +375,9 @@ def master_main():
     args = options.parse_args_and_arch(parser)
     restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-    best_val = float('-inf')
+    best_val = float('inf')
 
-    for ckpt in range(1, 11):
+    for ckpt in range(10, 101, 10):
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
 
         all_stats = []
@@ -389,7 +389,7 @@ def master_main():
 
         val, best_train, num_iter = cross_validate(all_stats)
 
-        if val > best_val:
+        if val < best_val:
             best_val = val
             best_mdl = (val, best_train, num_iter, ckpt)
 
