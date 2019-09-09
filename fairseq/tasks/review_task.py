@@ -93,9 +93,9 @@ class ReviewTask(FairseqTask):
 
         # e.g., /path/to/data/train.{bin,idx}
         if self.train_unseen_task:
-            split_path = os.path.join(data_path, 'test-' + split)
+            split_path = os.path.join(data_path, 'test.' + split)
         else:
-            split_path = os.path.join(data_path, split)
+            split_path = os.path.join(data_path, 'train.' + split)
 
         dataset = data_utils.load_indexed_dataset(split_path, self.vocab, self.args.dataset_impl)
         if dataset is None:

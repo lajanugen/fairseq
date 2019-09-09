@@ -330,8 +330,8 @@ class FairseqReviewLM(BaseFairseqModel):
             reviews = reviews[:-1]
             num_reviews  = len(reviews)
 
-            assert num_reviews > 1
             if split_data:
+                assert num_reviews > 1
                 num_train = int(0.5 * num_reviews)
                 num_test = num_reviews - num_train
                 train_mask.extend([1] * num_train)
