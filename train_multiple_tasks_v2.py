@@ -24,13 +24,17 @@ from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 
 
-def cross_validate(stats):
+def cross_validate(stats, no_training):
     best_train_accuracies = []
     val_accuracies = []
 
     best_num_iters = None
 
-    num_iter_grid = [10, 20, 30, 40, 50]
+    if no_training:
+        num_iter_grid = [1]
+    else:
+        num_iter_grid = [10, 20, 30, 40, 50]
+
     num_iter_perf = {}
     for num_iter in num_iter_grid:
         num_iter_perf[num_iter] = []
@@ -362,6 +366,10 @@ def master_main():
     parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
     args = options.parse_args_and_arch(parser)
 
+    no_training = args.no_training
+    if no_training:
+        args.max_epoch = 1
+
     if args.fast_eval:
         best_num_iter = args.eval_num_iter
     else:
@@ -383,7 +391,7 @@ def master_main():
                 train_stats, valid_stats = cli_main(args, state)
                 all_stats.append((train_stats, valid_stats))
 
-            val, best_train, num_iter = cross_validate(all_stats)
+            val, best_train, num_iter = cross_validate(all_stats, no_training)
 
             if val < best_val:
                 best_val = val

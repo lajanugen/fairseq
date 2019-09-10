@@ -1,4 +1,4 @@
-#from pdb import set_trace as bp
+# from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -315,79 +315,26 @@ class FairseqReviewLM(BaseFairseqModel):
         mode='train'
     ):
 
-        task_id = []
-        all_reviews = []
+        if not self.task.train_unseen_task:
+            task_id = src_tokens[:, 0]
+            task_id = torch.LongTensor(list(map(int, self.task.vocab.string(task_id).split()))).cuda()
+            src_tokens = src_tokens[:, 1:]
 
-        train_mask = []
-
-        input_tokens = src_tokens.cpu()
-        for i in range(input_tokens.size(0)):
-            review_boundaries = input_tokens[i].eq(self.task.vocab.eos()).nonzero()
-            review_boundaries += 1 # Include eos
-            reviews = np.split(input_tokens[i], review_boundaries)
-
-            # reviews = reviews[1:]  # ignore the first one, it's empty because input_tokens begins with </s>
-            reviews = reviews[:-1]
-            num_reviews  = len(reviews)
-
-            if split_data:
-                assert num_reviews > 1
-                num_train = int(0.5 * num_reviews)
-                num_test = num_reviews - num_train
-                train_mask.extend([1] * num_train)
-                train_mask.extend([0] * num_test)
-
-            # print('\n\nReviews for product {}:'.format(i))
-            for review in reviews:
-                # review_txt = self.task.vocab.string(review)
-                # print(' - {}'.format(review_txt))
-                task_id.append(i)
-                review = pad_review_to_max_len(review, self.max_seq_len, self.task.vocab.pad())
-                all_reviews.append(review)
-            # print('%.2f %.2f' % (np.mean(review_lens), np.max(review_lens)))
-            # for review in reviews:
-            #     print(len(review))
-            # print(len(reviews))
-
-        task_id = torch.LongTensor(task_id).cuda()
-        src_tokens = torch.stack(all_reviews, 0)
         bs = src_tokens.shape[0]
-        bos_tensor = torch.LongTensor(bs, 1).fill_(self.task.vocab.bos())
+        bos_tensor = torch.LongTensor(bs, 1).fill_(self.task.vocab.bos()).cuda()
 
-        targets = src_tokens.cuda()
-        src_tokens = torch.cat((bos_tensor, src_tokens[:, :-1]), dim=1).cuda()
+        targets = src_tokens
+        src_tokens = torch.cat((bos_tensor, src_tokens[:, :-1]), dim=1)
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
         loss_mask = loss_mask.cuda()
 
         if split_data:
-            train_mask = torch.Tensor(train_mask).view(-1, 1).repeat(1, self.max_seq_len).cuda()
+            train_mask = torch.Tensor(targets.shape).uniform_(0, 2).long().float().cuda()
             test_mask = 1 - train_mask
         else:
             train_mask, test_mask = None, None
-
-        # if num_tasks:
-        #     num_ex_per_task = bs // num_tasks
-
-        # if split_data:
-        #     if self.train_unseen_task:
-        #         split_ratio = 0.5
-        #     else:
-        #         split_ratio = 0.7
-
-        #     if num_tasks:
-        #         N_train = int(split_ratio * num_ex_per_task)
-        #         train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
-        #         train_mask = train_mask.view(-1)
-        #     else:
-        #         N_train = int(split_ratio * bs)
-        #         train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
-        #     test_mask = 1 - train_mask
-        # else:
-        #     train_mask = torch.ones(bs).cuda()
-        #     test_mask = train_mask
-
 
         outputs = {}
 
@@ -398,9 +345,9 @@ class FairseqReviewLM(BaseFairseqModel):
                 task_embeddings = self.task_embeddings
 
         if self.training_mode == 'task_agnostic':
-            attn_mask = subsequent_mask(self.max_seq_len)
+            attn_mask = subsequent_mask(targets.shape[1])
         else:
-            attn_mask = subsequent_mask(self.max_seq_len + 1)
+            attn_mask = subsequent_mask(targets.shape[1] + 1)
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':

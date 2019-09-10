@@ -95,27 +95,11 @@ class ReviewTask(FairseqTask):
         if self.train_unseen_task:
             split_path = os.path.join(data_path, 'test.' + split)
         else:
-            split_path = os.path.join(data_path, 'train.' + split)
+            split_path = os.path.join(data_path, 'train.' + split + '.shuf')
 
         dataset = data_utils.load_indexed_dataset(split_path, self.vocab, self.args.dataset_impl)
         if dataset is None:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, split_path))
-
-        # view the dataset as a single 1D tensor and chunk into samples
-        # according to break_mode
-        dataset = TokenBlockDataset(
-            dataset,
-            dataset.sizes,
-            block_size=self.args.tokens_per_sample,
-            pad=self.vocab.pad(),
-            eos=self.vocab.eos(),
-            # "complete_doc" mode splits the underlying dataset into documents
-            # (where documents are separated by blank lines) and then returns
-            # chunks of sentences up to block_size. A single document may span
-            # multiple chunks, but each chunk will only contain sentences from
-            # a single document.
-            break_mode='complete_doc',
-        )
 
         if self.train_unseen_task:
           self.dataset_size[split] = len(dataset)
@@ -147,13 +131,7 @@ class ReviewTask(FairseqTask):
                     ),
                     'src_lengths': NumelDataset(input_tokens, reduce=False),
                 },
-                # 'target': PadDataset(
-                #     target_tokens,
-                #     pad_idx=self.target_dictionary.pad(),
-                #     left_pad=False
-                # ),
                 'nsentences': NumSamplesDataset(),
-                # 'ntokens': NumelDataset(target_tokens, reduce=True),
                 'ntokens': NumelDataset(input_tokens, reduce=True),
             },
             sizes=[input_tokens.sizes],
