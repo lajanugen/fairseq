@@ -7,21 +7,21 @@
 ##TEST_SAMPLES=10
 
 # Feed-forward model, multitask training
-LOAD_PREFIX=ff_multitask
+#LOAD_PREFIX=ff_multitask
+#MODE=single_task
+#FINETUNE=yes
+#MDL=default
+##TEST_SAMPLES=10
+
+# Feed-forward model, meta training
+LOAD_PREFIX=ff_meta
 MODE=single_task
-FINETUNE=yes
+FINETUNE=z
 MDL=default
 #TEST_SAMPLES=10
 
-# Feed-forward model, meta training
-#LOAD_PREFIX=ff_meta
-#MODE=single_task
-#FINETUNE=z
-#MDL=default
-#TEST_SAMPLES=10
-
 ## DEFALUTS ##
-export CKPT_DIR=/checkpoint/annl/transfer_learn_lm
+export CKPT_DIR=/checkpoint/annl/transfer_learn_lm_v2
 export DBG_MODE=no
 export LAYERS=4
 #export ZSIZE=128
@@ -40,7 +40,8 @@ for ts in 1 5 10 20 25 30 40 50 ; do
 			LOAD=${LOAD_PREFIX}_zsize${z}_run${run}
 			export LOAD=${LOAD}
 
-			./scripts/eval_synthetic_lm.sh
+			./scripts/eval_synthetic_lm_v2.sh
 		done
 	done
 done
+

@@ -4,7 +4,7 @@
 MDL=default
 
 ## DEFALUTS ##
-export CKPT_DIR=/checkpoint/annl/transfer_learn_lm
+export CKPT_DIR=/checkpoint/annl/transfer_learn_lm_v2
 export DBG_MODE=no
 export LAYERS=4
 #export ZSIZE=128
@@ -24,7 +24,7 @@ for md in task_agnostic multitask meta ; do
 
 		   EXP_NAME=ff_${md}_zsize${zsize}_run${run}
 		   export EXP_NAME=$EXP_NAME
-		   ./scripts/train_synthetic_lm.sh
+		   ./scripts/train_synthetic_lm_v2.sh
 	   done
    done
 done
