@@ -106,6 +106,8 @@ def main(args, state=None, init_distributed=False):
         args.max_sentences,
     ))
 
+    print('Mode', model.training_mode)
+
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
     if state is not None:

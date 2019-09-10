@@ -39,30 +39,10 @@ class ReviewTask(FairseqTask):
 
         parser.add_argument('--max-positions', default=1024, type=int,
                             help='max input length')
-        parser.add_argument('--num_train', default=10000, type=int,
-                            help='Num training examples')
-        parser.add_argument('--num_test', default=10000, type=int,
-                            help='Num test examples')
-        parser.add_argument('--vocab_size', default=10, type=int,
-                            help='Vocabulary size')
-        parser.add_argument('--num_train_tasks', default=5, type=int,
-                            help='Number of training tasks')
-        parser.add_argument('--num_test_tasks', default=5, type=int,
-                            help='Number of test tasks')
         parser.add_argument('--train_unseen_task', action='store_true',
                             help='Train on unseen task')
-        parser.add_argument('--sample_num_tasks', default=1, type=int,
-                            help='Num of tasks to sample for each iteration')
-        parser.add_argument('--batch_version', action='store_true',
-                            help='Batch update')
-        parser.add_argument('--task_descriptions_dir', default='/tmp', type=str,
-                            help='Location to write task descriptions')
         parser.add_argument('--eval_task_id', default=0, type=int,
                             help='Identifier of meta eval task')
-        parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
-                            help='Tasks file.')
-        parser.add_argument('--all_task_examples', action='store_true',
-                            help='Feed all task training examples as input.')
         parser.add_argument('--no_training', action='store_true',
                             help='No fine-tuning.')
 

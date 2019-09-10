@@ -85,13 +85,9 @@ class LMClassifier(nn.Module):
         self.task_emb_size = args.task_emb_size
 
         self.num_grad_updates = args.num_grad_updates
-        self.meta_gradient = args.meta_gradient
         self.use_momentum = args.use_momentum
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.reinit_meta_opt = args.reinit_meta_opt
-        self.task_emb_init = args.task_emb_init
-        self.num_task_examples = args.num_task_examples
 
         self.sentence_encoder = TransformerSentenceEncoderTaskemb(
             padding_idx=self.padding_idx,
@@ -219,8 +215,6 @@ class FairseqReviewLM(BaseFairseqModel):
                             help='Multi-tasking/meta-learning')
         parser.add_argument('--num_grad_updates', default=1, type=int,
                             help='Number of grad steps in inner loop')
-        parser.add_argument('--meta_gradient', action='store_true',
-                            help='Backprop through optimization or not')
         parser.add_argument('--regularization', action='store_true',
                             help='Enable/Disable all regularization')
         parser.add_argument('--use_momentum', action='store_true',
@@ -231,12 +225,6 @@ class FairseqReviewLM(BaseFairseqModel):
                             help='Output z optimization losses')
         parser.add_argument('--z_lr', default=1e-3, type=float,
                             help='learning rate for optimizing z')
-        parser.add_argument('--reinit_meta_opt', action='store_true',
-                            help='Re-initialize meta opt for every step')
-        parser.add_argument('--task_emb_init', default='mean', type=str,
-                            help='How to initialize rask embedding.')
-        parser.add_argument('--num_task_examples', default=100, type=int,
-                            help='Number of examples in task description.')
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
         parser.add_argument('--max_seq_len', default=128, type=int,
@@ -266,16 +254,10 @@ class FairseqReviewLM(BaseFairseqModel):
         self.encoder_embed_dim = args.encoder_embed_dim
         self.training_mode = args.training_mode
         self.num_grad_updates = args.num_grad_updates
-        self.meta_gradient = args.meta_gradient
         self.use_momentum = args.use_momentum
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.reinit_meta_opt = args.reinit_meta_opt
-        # self.num_train_tasks = task.num_train_tasks
-        # self.num_test_tasks = task.num_test_tasks
-        self.task_emb_init = args.task_emb_init
-        self.num_task_examples = args.num_task_examples
         self.max_seq_len = args.max_seq_len
         # self.train_unseen_task = task.train_unseen_task
 
@@ -479,6 +461,4 @@ def toy_transformer_cls(args):
     args.encoder_normalize_before = getattr(args, 'encoder_normalize_before', False)
 
     args.tune_model_params = getattr(args, 'tune_model_params', False)
-    args.meta_gradient = getattr(args, 'meta_gradient', False)
     args.use_momentum = getattr(args, 'use_momentum', False)
-    args.reinit_meta_opt = getattr(args, 'reinit_meta_opt', False)
