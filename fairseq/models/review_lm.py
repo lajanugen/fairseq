@@ -1,4 +1,4 @@
-# from pdb import set_trace as bp
+from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -44,9 +44,9 @@ def compute_loss(logits, target, mask=None, loss_mask=None):
 
     if overall_mask is not None:
         loss = F.cross_entropy(logits, target, reduction='none') * overall_mask
-        loss = loss.sum() / overall_mask.sum()
+        loss = loss.sum()
     else:
-        loss = F.cross_entropy(logits, target, reduction='mean')
+        loss = F.cross_entropy(logits, target, reduction='sum')
 
     return loss
 

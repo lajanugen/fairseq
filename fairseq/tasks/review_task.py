@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -132,22 +133,18 @@ class ReviewTask(FairseqTask):
 
     def _get_loss(self, sample, model, criterion, split_data=False):
 
-        # targets = sample['target']
-        # sample['net_input']['targets'] = targets
         sample['net_input']['split_data'] = split_data
 
         outputs = model(**sample['net_input'])
 
         loss = outputs['post_loss_train']
-        outputs['nll_loss'] = loss
+        outputs['loss'] = loss
 
-        # sample_size = sample['target'].size(0)
-        # sample_size = 1
-        sample_size = sample['nsentences']
+        sample_size = sample['ntokens']
 
         logging_output = {
             'ntokens': sample['ntokens'],
-            'sample_size': sample['nsentences'],
+            'sample_size': sample['ntokens'],
         }
 
         self.logging_diagnostics = outputs.keys()
@@ -158,7 +155,13 @@ class ReviewTask(FairseqTask):
                 value = value.item()
             logging_output[diagnostic] = value
 
+        # loss, sample_size, logging_output = criterion(model, sample)
+
         return loss, sample_size, logging_output
+
+    def aggregate_logging_outputs(self, logging_outputs, criterion):
+        agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
+        return agg_logging_outputs
 
     def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
         model.train()
@@ -181,17 +184,10 @@ class ReviewTask(FairseqTask):
                 loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
         else:
             with torch.no_grad():
-                loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+                loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
 
         return loss, sample_size, logging_output
 
-    def aggregate_logging_outputs(self, logging_outputs, criterion):
-        agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
-        for other_metrics in self.logging_diagnostics:
-            agg_logging_outputs[other_metrics] = sum(
-                log[other_metrics] for log in logging_outputs if other_metrics in log
-            )
-        return agg_logging_outputs
     @property
     def source_dictionary(self):
         return self.vocab
