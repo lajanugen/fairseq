@@ -1,8 +1,10 @@
+from pdb import set_trace as bp
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+import torch
 from fairseq import options, utils
 from fairseq.models import (
     FairseqLanguageModel,
@@ -107,12 +109,10 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                             help='Multi-tasking/meta-learning')
         parser.add_argument('--regularization', action='store_true',
                             help='Enable/Disable all regularization')
-        parser.add_argument('--task_emb_size', default=128, type=int,
-                            help='Size of task embedding')
-        parser.add_argument('--max_seq_len', default=128, type=int,
-                            help='Maximum sequence length.')
         parser.add_argument('--max_tasks', default=16, type=int,
                             help='Maximum number of tasks.')
+        parser.add_argument('--train_only_z', action='store_true',
+                            help='Train only z.')
         # fmt: on
 
     @classmethod
@@ -151,9 +151,35 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
             args,
             task.target_dictionary,
             embed_tokens,
-            no_encoder_attn='meta' not in args.training_mode
+            no_encoder_attn=args.training_mode == 'task_agnostic'
         )
+
+        if getattr(args, 'train_only_z', None) and args.train_only_z:
+            assert args.training_mode == 'single_task'
+            print("Model params are not tuned!")
+            for param in decoder.parameters():
+                param.requires_grad = False
+            decoder.task_embedding_init.requires_grad = True
+
         return TransformerLanguageModelMeta(decoder)
+
+    def upgrade_state_dict_named(self, state_dict, name):
+
+        task_emb_size = None
+        for k in list(state_dict.keys()):
+            print(k)
+            if "task_embedding" in k:
+                print('Ignoring: ', k)
+                task_emb_size = state_dict[k].shape[-1]
+                del state_dict[k]
+
+        # if self.training_mode != 'task_agnostic':
+        #     print('Note: Initializing task embedding with zeros')
+        #     state_dict['task_embedding_init'] = torch.zeros(self.encoder_embed_dim)
+        if task_emb_size:
+            state_dict['decoder.task_embedding_init'] = torch.zeros(task_emb_size)
+
+        return state_dict
 
 
 @register_model_architecture('transformer_lm_meta', 'transformer_lm_meta')
@@ -172,7 +198,6 @@ def base_lm_architecture(args):
     args.attention_dropout = getattr(args, 'attention_dropout', 0.0)
 
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
-    args.task_emb_size = getattr(args, 'task_emb_size', 512)
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 2048)
     args.decoder_layers = getattr(args, 'decoder_layers', 6)
@@ -212,10 +237,33 @@ def transformer_lm_meta_small(args):
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
     args.dropout = getattr(args, 'dropout', 0.0)
     args.attention_dropout = getattr(args, 'attention_dropout', 0.0)
-    args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '20000,40000')
-    args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0.2)
+    # args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', True)
+    args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', True)
+    # args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0.0)
+    # args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '20000,40000')
+    # args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '50265')
     base_lm_architecture(args)
 
+@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_z32')
+def transformer_lm_meta_z32(args):
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 32)
+    transformer_lm_meta_small(args)
+
+@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_z8')
+def transformer_lm_meta_z8(args):
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 8)
+    transformer_lm_meta_small(args)
+
+@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_iwslt')
+def transformer_lm_meta_iwslt(args):
+    args.encoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 1024)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
+    args.decoder_layers = getattr(args, 'decoder_layers', 6)
+    args.dropout = getattr(args, 'dropout', 0.1)
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
+    args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', True)
+    base_lm_architecture(args)
 
 # @register_model_architecture('transformer_lm_meta', 'transformer_lm_big')
 # def transformer_lm_big(args):

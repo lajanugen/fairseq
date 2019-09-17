@@ -54,7 +54,6 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
 
         input_embed_dim = embed_tokens.embedding_dim
         self.input_embed_dim = input_embed_dim
-        self.task_emb_size = args.task_emb_size
         embed_dim = args.decoder_embed_dim
         self.output_embed_dim = args.decoder_output_dim
         self.dictionary = dictionary
@@ -105,17 +104,17 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         self.training_mode = args.training_mode
 
         if args.training_mode == 'multitask':
-            self.task_embeddings = nn.Embedding(args.max_tasks, args.task_emb_size)
-            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.task_emb_size)
+            self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
 
         elif 'meta' in args.training_mode:
-            self.task_embeddings = nn.Embedding(args.max_tasks, args.task_emb_size)
-            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.task_emb_size)
+            self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
             self.z_optimizer = optim.Adam(self.task_embeddings.parameters(), lr=args.z_lr)
             # self.z_optimizer_eval = optim.Adam(self.task_embeddings_eval.parameters(), lr=args.z_lr)
 
         elif args.training_mode == 'single_task':
-            self.task_embedding_init = nn.Parameter(torch.randn(args.task_emb_size))
+            self.task_embedding_init = nn.Parameter(torch.randn(args.encoder_embed_dim))
 
     def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, **unused):
         """
