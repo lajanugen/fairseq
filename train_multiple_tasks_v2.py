@@ -24,13 +24,17 @@ from fairseq.trainer import Trainer
 from fairseq.meters import AverageMeter, StopwatchMeter
 
 
-def cross_validate(stats):
+def cross_validate(stats, no_training):
     best_train_accuracies = []
     val_accuracies = []
 
     best_num_iters = None
 
-    num_iter_grid = [10, 20, 30, 40, 50]
+    if no_training:
+        num_iter_grid = [1]
+    else:
+        num_iter_grid = [10, 20, 30, 40, 50]
+
     num_iter_perf = {}
     for num_iter in num_iter_grid:
         num_iter_perf[num_iter] = []
@@ -42,8 +46,6 @@ def cross_validate(stats):
         task_train_accuracies = [float(train_accs[i]['ppl']) for i in range(len(train_accs))]
         task_val_accuracies = [float(val_accs[i]['ppl']) for i in range(len(val_accs))]
 
-        # if i < num_tasks / 4:
-
         assert len(task_val_accuracies) == num_iter_grid[-1]
 
         for num_iter in num_iter_grid:
@@ -52,27 +54,14 @@ def cross_validate(stats):
         best_train_accuracies.append(min(task_train_accuracies))
         val_accuracies.append(min(task_val_accuracies))
 
-        # else:
-        #     if best_num_iters is None:
-        #         avg_perf_grid = []
-        #         for num_iter in num_iter_grid:
-        #             avg_perf_grid.append(np.mean(num_iter_perf[num_iter]))
-        #         best_num_iters = num_iter_grid[np.argmax(avg_perf_grid)]
-
-        #     train_accuracies.append(task_train_accuracies[best_num_iters - 1])
-        #     test_accuracies.append(task_val_accuracies[best_num_iters - 1])
-
     avg_perf_grid = []
     for num_iter in num_iter_grid:
         avg_perf_grid.append(np.mean(num_iter_perf[num_iter]))
     best_num_iters = num_iter_grid[np.argmin(avg_perf_grid)]
 
-    # test_accuracy = sum(test_accuracies) / len(test_accuracies)
     val_accuracy = sum(val_accuracies) / len(val_accuracies)
-    # train_accuracy = sum(train_accuracies) /len(train_accuracies)
     best_train_accuracy = sum(best_train_accuracies) / len(best_train_accuracies)
 
-    # return test_accuracy, train_accuracy, val_accuracy, best_train_accuracy, best_num_iters
     return val_accuracy, best_train_accuracy, best_num_iters
 
 
@@ -116,6 +105,8 @@ def main(args, state=None, init_distributed=False):
         args.max_tokens,
         args.max_sentences,
     ))
+
+    print('Mode', model.training_mode)
 
     # Load the latest checkpoint if one is available and restore the
     # corresponding train iterator
@@ -373,33 +364,44 @@ def master_main():
     sys.stdout = f
 
     parser = options.get_training_parser()
+    parser.add_argument("--fast-eval", action="store_true", help="Fast eval mode.")
+    parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
     args = options.parse_args_and_arch(parser)
-    restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-    best_val = float('-inf')
+    no_training = args.no_training
+    if no_training:
+        args.max_epoch = 1
 
-    for ckpt in range(1, 11):
-        args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
-        print(args.restore_file)
-        print(os.path.exists(args.restore_file))
-        assert os.path.exists(args.restore_file)
-        state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
+    if args.fast_eval:
+        best_num_iter = args.eval_num_iter
+    else:
+        restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
-        all_stats = []
-        for task in range(16):
-            args.eval_task_id = task
+        best_val = float('inf')
 
-            train_stats, valid_stats = cli_main(args, state)
-            all_stats.append((train_stats, valid_stats))
+        for ckpt in range(1, 11):
+            args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
+            print(args.restore_file)
+            print(os.path.exists(args.restore_file))
+            assert os.path.exists(args.restore_file)
+            state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
-        val, best_train, num_iter = cross_validate(all_stats)
+            all_stats = []
+            for task in range(16):
+                args.eval_task_id = task
 
-        if val > best_val:
-            best_val = val
-            best_mdl = (val, best_train, num_iter, ckpt)
+                train_stats, valid_stats = cli_main(args, state)
+                all_stats.append((train_stats, valid_stats))
 
-    val, best_train, best_num_iter, best_ckpt = best_mdl
-    args.restore_file = '%s/checkpoint%d.pt' % (restore_path, best_ckpt)
+            val, best_train, num_iter = cross_validate(all_stats, no_training)
+
+            if val < best_val:
+                best_val = val
+                best_mdl = (val, best_train, num_iter, ckpt)
+
+        val, best_train, best_num_iter, best_ckpt = best_mdl
+        args.restore_file = '%s/checkpoint%d.pt' % (restore_path, best_ckpt)
+
     assert os.path.exists(args.restore_file)
     state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
@@ -416,8 +418,12 @@ def master_main():
 
     sys.stdout = stdout
 
-    print('test, train, best_val, best_train, best_num_iter, best_ckpt')
-    print('%.2f %.2f %.2f %.2f %d %d' % (test, train, val, best_train, best_num_iter, best_ckpt))
+    if args.fast_eval:
+        print('test, train, best_num_iter')
+        print('%.2f %.2f %d' % (test, train, best_num_iter))
+    else:
+        print('test, train, best_val, best_train, best_num_iter, best_ckpt')
+        print('%.2f %.2f %.2f %.2f %d %d' % (test, train, val, best_train, best_num_iter, best_ckpt))
 
 
 if __name__ == '__main__':

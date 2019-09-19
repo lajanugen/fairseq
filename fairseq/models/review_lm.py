@@ -1,4 +1,4 @@
-#from pdb import set_trace as bp
+from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -44,9 +44,9 @@ def compute_loss(logits, target, mask=None, loss_mask=None):
 
     if overall_mask is not None:
         loss = F.cross_entropy(logits, target, reduction='none') * overall_mask
-        loss = loss.sum() / overall_mask.sum()
+        loss = loss.sum()
     else:
-        loss = F.cross_entropy(logits, target, reduction='mean')
+        loss = F.cross_entropy(logits, target, reduction='sum')
 
     return loss
 
@@ -85,13 +85,9 @@ class LMClassifier(nn.Module):
         self.task_emb_size = args.task_emb_size
 
         self.num_grad_updates = args.num_grad_updates
-        self.meta_gradient = args.meta_gradient
         self.use_momentum = args.use_momentum
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.reinit_meta_opt = args.reinit_meta_opt
-        self.task_emb_init = args.task_emb_init
-        self.num_task_examples = args.num_task_examples
 
         self.sentence_encoder = TransformerSentenceEncoderTaskemb(
             padding_idx=self.padding_idx,
@@ -219,8 +215,6 @@ class FairseqReviewLM(BaseFairseqModel):
                             help='Multi-tasking/meta-learning')
         parser.add_argument('--num_grad_updates', default=1, type=int,
                             help='Number of grad steps in inner loop')
-        parser.add_argument('--meta_gradient', action='store_true',
-                            help='Backprop through optimization or not')
         parser.add_argument('--regularization', action='store_true',
                             help='Enable/Disable all regularization')
         parser.add_argument('--use_momentum', action='store_true',
@@ -231,12 +225,6 @@ class FairseqReviewLM(BaseFairseqModel):
                             help='Output z optimization losses')
         parser.add_argument('--z_lr', default=1e-3, type=float,
                             help='learning rate for optimizing z')
-        parser.add_argument('--reinit_meta_opt', action='store_true',
-                            help='Re-initialize meta opt for every step')
-        parser.add_argument('--task_emb_init', default='mean', type=str,
-                            help='How to initialize rask embedding.')
-        parser.add_argument('--num_task_examples', default=100, type=int,
-                            help='Number of examples in task description.')
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
 #        parser.add_argument('--max_seq_len', default=128, type=int,
@@ -266,18 +254,14 @@ class FairseqReviewLM(BaseFairseqModel):
         self.encoder_embed_dim = args.encoder_embed_dim
         self.training_mode = args.training_mode
         self.num_grad_updates = args.num_grad_updates
-        self.meta_gradient = args.meta_gradient
         self.use_momentum = args.use_momentum
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.reinit_meta_opt = args.reinit_meta_opt
         self.num_train_tasks = task.num_train_tasks
         self.num_test_tasks = task.num_test_tasks
-        self.task_emb_init = args.task_emb_init
-        self.num_task_examples = args.num_task_examples
         self.max_seq_len = task.max_seq_len
-        self.train_unseen_task = task.train_unseen_task
+        # self.train_unseen_task = task.train_unseen_task
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -350,34 +334,16 @@ class FairseqReviewLM(BaseFairseqModel):
         targets = targets[:, 1:]
         src_tokens = torch.cat((bos_tensor, src_tokens.cpu()[:, 1:-1]), dim=1).cuda()
 
+
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
         loss_mask = loss_mask.cuda()
 
-        if num_tasks:
-            num_ex_per_task = bs // num_tasks
-
         if split_data:
-            if self.train_unseen_task:
-                split_ratio = 0.5
-            else:
-                split_ratio = 0.7
-
-            if num_tasks:
-                N_train = int(split_ratio * num_ex_per_task)
-                train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
-                train_mask = train_mask.view(-1)
-            else:
-                N_train = int(split_ratio * bs)
-                train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
+            train_mask = torch.Tensor(targets.shape).uniform_(0, 2).long().float().cuda()
             test_mask = 1 - train_mask
         else:
-            train_mask = torch.ones(bs).cuda()
-            test_mask = train_mask
-
-        # train_mask, test_mask = None, None
-        train_mask = train_mask.repeat(1, src_lengths[0] - 1)
-        test_mask = test_mask.repeat(1, src_lengths[0] - 1)
+            train_mask, test_mask = None, None
 
         outputs = {}
 
@@ -388,11 +354,9 @@ class FairseqReviewLM(BaseFairseqModel):
                 task_embeddings = self.task_embeddings
 
         if self.training_mode == 'task_agnostic':
-          #  attn_mask = subsequent_mask(self.max_seq_len)
-            attn_mask = subsequent_mask(src_lengths[0] - 1)
+            attn_mask = subsequent_mask(targets.shape[1])
         else:
-          #  attn_mask = subsequent_mask(self.max_seq_len + 1)
-            attn_mask = subsequent_mask(src_lengths[0])
+            attn_mask = subsequent_mask(targets.shape[1] + 1)
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
@@ -524,6 +488,4 @@ def toy_transformer_cls(args):
     args.encoder_normalize_before = getattr(args, 'encoder_normalize_before', False)
 
     args.tune_model_params = getattr(args, 'tune_model_params', False)
-    args.meta_gradient = getattr(args, 'meta_gradient', False)
     args.use_momentum = getattr(args, 'use_momentum', False)
-    args.reinit_meta_opt = getattr(args, 'reinit_meta_opt', False)

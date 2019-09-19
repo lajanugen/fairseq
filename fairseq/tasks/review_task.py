@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -39,30 +40,10 @@ class ReviewTask(FairseqTask):
 
         parser.add_argument('--max-positions', default=1024, type=int,
                             help='max input length')
-        parser.add_argument('--num_train', default=10000, type=int,
-                            help='Num training examples')
-        parser.add_argument('--num_test', default=10000, type=int,
-                            help='Num test examples')
-        parser.add_argument('--vocab_size', default=10, type=int,
-                            help='Vocabulary size')
-        parser.add_argument('--num_train_tasks', default=5, type=int,
-                            help='Number of training tasks')
-        parser.add_argument('--num_test_tasks', default=5, type=int,
-                            help='Number of test tasks')
         parser.add_argument('--train_unseen_task', action='store_true',
                             help='Train on unseen task')
-        parser.add_argument('--sample_num_tasks', default=1, type=int,
-                            help='Num of tasks to sample for each iteration')
-        parser.add_argument('--batch_version', action='store_true',
-                            help='Batch update')
-        parser.add_argument('--task_descriptions_dir', default='/tmp', type=str,
-                            help='Location to write task descriptions')
         parser.add_argument('--eval_task_id', default=0, type=int,
                             help='Identifier of meta eval task')
-        parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
-                            help='Tasks file.')
-        parser.add_argument('--all_task_examples', action='store_true',
-                            help='Feed all task training examples as input.')
         parser.add_argument('--no_training', action='store_true',
                             help='No fine-tuning.')
 
@@ -93,29 +74,13 @@ class ReviewTask(FairseqTask):
 
         # e.g., /path/to/data/train.{bin,idx}
         if self.train_unseen_task:
-            split_path = os.path.join(data_path, 'test-' + split)
+            split_path = os.path.join(data_path, 'test.' + split)
         else:
-            split_path = os.path.join(data_path, split)
+            split_path = os.path.join(data_path, 'train.' + split + '.shuf')
 
         dataset = data_utils.load_indexed_dataset(split_path, self.vocab, self.args.dataset_impl)
         if dataset is None:
             raise FileNotFoundError('Dataset not found: {} ({})'.format(split, split_path))
-
-        # view the dataset as a single 1D tensor and chunk into samples
-        # according to break_mode
-        dataset = TokenBlockDataset(
-            dataset,
-            dataset.sizes,
-            block_size=self.args.tokens_per_sample,
-            pad=self.vocab.pad(),
-            eos=self.vocab.eos(),
-            # "complete_doc" mode splits the underlying dataset into documents
-            # (where documents are separated by blank lines) and then returns
-            # chunks of sentences up to block_size. A single document may span
-            # multiple chunks, but each chunk will only contain sentences from
-            # a single document.
-            break_mode='complete_doc',
-        )
 
         if self.train_unseen_task:
           self.dataset_size[split] = len(dataset)
@@ -147,13 +112,7 @@ class ReviewTask(FairseqTask):
                     ),
                     'src_lengths': NumelDataset(input_tokens, reduce=False),
                 },
-                # 'target': PadDataset(
-                #     target_tokens,
-                #     pad_idx=self.target_dictionary.pad(),
-                #     left_pad=False
-                # ),
                 'nsentences': NumSamplesDataset(),
-                # 'ntokens': NumelDataset(target_tokens, reduce=True),
                 'ntokens': NumelDataset(input_tokens, reduce=True),
             },
             sizes=[input_tokens.sizes],
@@ -174,22 +133,18 @@ class ReviewTask(FairseqTask):
 
     def _get_loss(self, sample, model, criterion, split_data=False):
 
-        # targets = sample['target']
-        # sample['net_input']['targets'] = targets
         sample['net_input']['split_data'] = split_data
 
         outputs = model(**sample['net_input'])
 
         loss = outputs['post_loss_train']
-        outputs['nll_loss'] = loss
+        outputs['loss'] = loss
 
-        # sample_size = sample['target'].size(0)
-        # sample_size = 1
-        sample_size = sample['nsentences']
+        sample_size = sample['ntokens']
 
         logging_output = {
             'ntokens': sample['ntokens'],
-            'sample_size': sample['nsentences'],
+            'sample_size': sample['ntokens'],
         }
 
         self.logging_diagnostics = outputs.keys()
@@ -200,7 +155,13 @@ class ReviewTask(FairseqTask):
                 value = value.item()
             logging_output[diagnostic] = value
 
+        # loss, sample_size, logging_output = criterion(model, sample)
+
         return loss, sample_size, logging_output
+
+    def aggregate_logging_outputs(self, logging_outputs, criterion):
+        agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
+        return agg_logging_outputs
 
     def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
         model.train()
@@ -227,13 +188,6 @@ class ReviewTask(FairseqTask):
 
         return loss, sample_size, logging_output
 
-    def aggregate_logging_outputs(self, logging_outputs, criterion):
-        agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
-        for other_metrics in self.logging_diagnostics:
-            agg_logging_outputs[other_metrics] = sum(
-                log[other_metrics] for log in logging_outputs if other_metrics in log
-            )
-        return agg_logging_outputs
     @property
     def source_dictionary(self):
         return self.vocab

@@ -11,7 +11,19 @@ class SubsetDataset(BaseWrapperDataset):
     def __init__(self, dataset, index):
         super().__init__(dataset)
         self.actual_size = 1
-        self.indices = [index]
+
+        count = 0 
+        indices = []
+        for i in range(len(dataset)):
+            if len(dataset[i]) == 1: 
+                if count == index:
+                   break
+                count += 1
+                indices = []
+            else:
+                indices.append(i)
+        self.indices = indices
+        self.actual_size = len(self.indices)
 
     def __getitem__(self, index):
         return self.dataset[self.indices[index]]
