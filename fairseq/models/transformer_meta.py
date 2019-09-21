@@ -57,6 +57,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         embed_dim = args.decoder_embed_dim
         self.output_embed_dim = args.decoder_output_dim
         self.dictionary = dictionary
+        self.encoder_embed_dim = args.encoder_embed_dim
 
         padding_idx = embed_tokens.padding_idx
         self.max_target_positions = args.max_target_positions
@@ -102,21 +103,28 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
             self.layer_norm = None
 
         self.training_mode = args.training_mode
+        self.task_emb_cond_type = args.task_emb_cond_type
+        self.LMinit = args.LMinit
 
         if args.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
-            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
 
         elif 'meta' in args.training_mode:
             self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
-            # self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
             self.z_optimizer = optim.Adam(self.task_embeddings.parameters(), lr=args.z_lr)
-            # self.z_optimizer_eval = optim.Adam(self.task_embeddings_eval.parameters(), lr=args.z_lr)
+            self.z_optimizer_eval = optim.Adam(self.task_embeddings_eval.parameters(), lr=args.z_lr)
 
         elif args.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(args.encoder_embed_dim))
 
-    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, **unused):
+        self.task_emb_proj = None
+        if args.training_mode != 'task_agnostic' and args.task_emb_cond_type == 'decoder':
+            if args.encoder_embed_dim != args.decoder_embed_dim: 
+                self.task_emb_proj = nn.Linear(args.encoder_embed_dim, args.decoder_embed_dim)
+
+    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, mode='train', **unused):
         """
         Args:
             prev_output_tokens (LongTensor): previous decoder outputs of shape
@@ -133,16 +141,20 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         """
 
         bs = prev_output_tokens.shape[0]
-        task_id = torch.arange(bs).cuda()
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
             task_embedding = self.task_embeddings(task_id)
         elif 'meta' in self.training_mode:
-            if meta_mode == 'outer':
-                task_embedding = self.task_embeddings(task_id).data
+            if mode == 'train':
+                task_embeddings = self.task_embeddings
             else:
-                task_embedding = self.task_embeddings(task_id)
+                task_embeddings = self.task_embeddings_eval
+
+            if meta_mode == 'outer':
+                task_embedding = task_embeddings(task_id).data
+            else:
+                task_embedding = task_embeddings(task_id)
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
         else:
@@ -153,14 +165,25 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                 task_embedding = task_embedding.unsqueeze(0)
             if task_embedding.shape[0] == 1:
                 task_embedding = task_embedding.expand(bs, -1)
-            task_embedding = task_embedding.unsqueeze(0)
-            encoder_out = {
-                'encoder_out': task_embedding, # T x B x C
-                'encoder_padding_mask': torch.zeros(bs, 1).bool().cuda() # B x T
-            }
+
+            if self.task_emb_cond_type == 'encoder':
+                task_embedding = task_embedding.unsqueeze(0)
+                encoder_out = {
+                    'encoder_out': task_embedding, # T x B x C
+                    'encoder_padding_mask': torch.zeros(bs, 1).bool().cuda() # B x T
+                }
+            else:
+                assert self.task_emb_cond_type == 'decoder'
+                task_embedding = task_embedding.unsqueeze(1)
+                if self.task_emb_proj is not None:
+                    task_embedding = self.task_emb_proj(task_embedding)
 
         x, extra = self.extract_features(prev_output_tokens, encoder_out, incremental_state, task_embedding=task_embedding)
         x = self.output_layer(x)
+
+        if task_embedding is not None and self.task_emb_cond_type == 'decoder':
+            x = x[:, 1:]
+
         return x, extra
 
     def extract_features(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_embedding=None, **unused):
@@ -192,6 +215,9 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         if positions is not None:
             x += positions
         x = F.dropout(x, p=self.dropout, training=self.training)
+
+        if task_embedding is not None and self.task_emb_cond_type == 'decoder':
+            x = torch.cat([task_embedding, x], axis=1)
 
         # B x T x C -> T x B x C
         x = x.transpose(0, 1)
@@ -272,6 +298,28 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
             self.layer_norm = None
             self.normalize = False
             state_dict[version_key] = torch.Tensor([1])
+
+        if self.LMinit and 'meta' in self.training_mode:
+
+            for i in range(len(self.layers)):
+                layer = self.layers[i]
+                for name, param in layer.named_parameters():
+                    if 'encoder_attn' in name:
+                        state_dict['decoder.layers.' + str(i) + '.' + name] = param.data
+            state_dict['decoder.task_embeddings.weight'] = self.task_embeddings.weight.data
+            state_dict['decoder.task_embeddings_eval.weight'] = self.task_embeddings.weight.data
+
+        else:
+
+            for k in list(state_dict.keys()):
+                print(k)
+                if "task_embedding" in k:
+                    print('Ignoring: ', k)
+                    del state_dict[k]
+
+            if self.training_mode != 'task_agnostic':
+                print('Note: Initializing task embedding with zeros')
+                state_dict['decoder.task_embedding_init'] = torch.zeros(self.encoder_embed_dim)
 
         return state_dict
 

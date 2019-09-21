@@ -17,7 +17,8 @@ from fairseq.data import (
     TokenBlockDataset,
     TransformEosDataset,
     TruncatedDictionary,
-    IndexedRawTextDataset
+    IndexedRawTextDataset,
+    SubsetDataset
 )
 from fairseq.tasks import FairseqTask, register_task
 
@@ -26,27 +27,60 @@ def set_learning_rate(optimizer, lr):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+
 class IndexedRawTextDatasetCustom(IndexedRawTextDataset):
 
-    def __init__(self, path, dictionary, append_eos=True, reverse_order=False, mode=None):
+    def __init__(self, path, dictionary, append_eos=True, reverse_order=False, eval_mode=False, eval_task_id=0, complete_doc=False):
+        self.eval_mode = eval_mode
+        self.eval_task_id = eval_task_id
+        self.complete_doc = complete_doc
         super().__init__(path, dictionary, append_eos=append_eos, reverse_order=reverse_order)
-        self.mode = mode
 
     def read_data(self, path, dictionary):
+        if self.eval_mode:
+            count = 0
+        lines_list = []
+        tokens_list = []
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip('\n')
                 if not line:
+                    if self.eval_mode:
+                        if count == self.eval_task_id - 1:
+                            self.lines = []
+                            self.tokens_list = []
+                            self.sizes = []
+                        elif count == self.eval_task_id:
+                            break
+                        count += 1
+                    if self.complete_doc:
+                        line = ' '.join(lines_list)
+                        tokens = torch.cat(tokens_list, 0)
+
+                        self.lines.append(line)
+                        self.tokens_list.append(tokens)
+                        self.sizes.append(len(tokens))
+
+                        lines_list = []
+                        tokens_list = []
                     continue
-                self.lines.append(line)
+
+                if self.complete_doc:
+                    line = '<s> ' + line
                 tokens = dictionary.encode_line(
                     line, add_if_not_exist=False,
                     append_eos=self.append_eos, reverse_order=self.reverse_order,
                 ).long()
-                self.tokens_list.append(tokens)
-                self.sizes.append(len(tokens))
-        self.sizes = np.array(self.sizes)
 
+                if self.complete_doc:
+                    lines_list.append(line)
+                    tokens_list.append(tokens)
+                else:
+                    self.lines.append(line)
+                    self.tokens_list.append(tokens)
+                    self.sizes.append(len(tokens))
+
+        self.sizes = np.array(self.sizes)
 
 @register_task("language_modeling_meta")
 class LanguageModelingMetaTask(FairseqTask):
@@ -119,6 +153,8 @@ class LanguageModelingMetaTask(FairseqTask):
                             help='learning rate for optimizing z')
         parser.add_argument('--num_grad_updates', default=1, type=int,
                             help='Number of grad steps in inner loop')
+        parser.add_argument('--LMinit', action='store_true',
+                            help='LM init.')
         # fmt: on
 
     def __init__(self, args, dictionary, output_dictionary=None, targets=None):
@@ -212,17 +248,22 @@ class LanguageModelingMetaTask(FairseqTask):
         else:
             split_path = os.path.join(data_path, 'train.' + split)
 
-        # dataset = data_utils.load_indexed_dataset(
-        #     split_path, self.dictionary, self.args.dataset_impl, combine=combine
-        # )
-        dataset = IndexedRawTextDatasetCustom(split_path, self.dictionary)
-        print('| loaded {} examples from: {}'.format(len(dataset), split_path))
-        if dataset is None:
-            raise FileNotFoundError(
-                "Dataset not found: {} ({})".format(split, split_path)
-            )
+        dataset = data_utils.load_indexed_dataset(
+            split_path, self.dictionary, self.args.dataset_impl, combine=combine
+        )
+        # dataset = IndexedRawTextDatasetCustom(
+        #     split_path, 
+        #     self.dictionary, 
+        #     eval_mode=self.train_unseen_task,
+        #     eval_task_id=self.eval_task_id)
+        # print('| loaded {} examples from: {}'.format(len(dataset), split_path))
+        # if dataset is None:
+        #     raise FileNotFoundError(
+        #         "Dataset not found: {} ({})".format(split, split_path)
+        #     )
 
         if self.train_unseen_task:
+          assert self.args.sample_break_mode != 'complete_doc'
           self.dataset_size[split] = len(dataset)
           print("Data size %s: %d" % (split, len(dataset)))
           if ('train' in self.dataset_size) and ('valid' in self.dataset_size):
@@ -299,8 +340,47 @@ class LanguageModelingMetaTask(FairseqTask):
         model."""
         return self.output_dictionary
 
+    def split_doc(self, sample):
+        src_reviews = []
+        tgt_reviews = []
+        task_id = []
+        count = 0
+        for i in range(sample['target'].shape[0]):
+            src = sample['net_input']['src_tokens'][i].cpu()
+            tgt = sample['target'][i].cpu()
+
+            review_boundaries = src.eq(self.dictionary.eos()).nonzero()
+
+            src_split = np.split(src, review_boundaries)
+            assert src_split[0].numel() == 0
+            src_split = src_split[1:]
+            src_reviews.extend(src_split)
+
+            tgt_split = np.split(tgt, review_boundaries)
+            assert tgt_split[0].numel() == 0
+            tgt_split = tgt_split[1:]
+            tgt_reviews.extend(tgt_split)
+
+            task_id.extend([count]*len(src_split))
+            count += 1
+    
+        src_tokens = data_utils.collate_tokens(src_reviews, self.dictionary.pad()).cuda()
+        target = data_utils.collate_tokens(tgt_reviews, self.dictionary.pad()).cuda()
+
+        task_id = torch.LongTensor(task_id).cuda()
+    
+        assert task_id.shape[0] == src_tokens.shape[0]
+
+        sample['net_input']['src_tokens'] = src_tokens
+        sample['target'] = target
+        sample['net_input']['task_id'] = task_id
+
     def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
         model.train()
+        sample['net_input']['mode'] = 'train'
+        
+        if self.args.sample_break_mode == 'complete_doc':
+            self.split_doc(sample)
 
         if 'meta' in model.decoder.training_mode:
             model.decoder.task_embeddings.weight.data.zero_()
@@ -319,10 +399,6 @@ class LanguageModelingMetaTask(FairseqTask):
                 z_optimizer.step()
 
                 if i == 0:
-                    # outputs['pre_loss_train'] = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
-                    # if split_data:
-                    #     outputs['pre_loss_test'] = compute_loss(logits, targets, mask=test_mask, loss_mask=loss_mask)
-
                     prev_loss = loss.item()
                 else:
                     cur_loss = loss.item()
@@ -336,6 +412,7 @@ class LanguageModelingMetaTask(FairseqTask):
                     prev_loss = cur_loss
 
         sample['net_input']['meta_mode'] = 'outer'
+        optimizer.zero_grad()
         loss, sample_size, logging_output = criterion(model, sample)
         if ignore_grad:
             loss *= 0
@@ -347,26 +424,44 @@ class LanguageModelingMetaTask(FairseqTask):
 
     def valid_step(self, sample, model, criterion):
         model.eval()
-        # We need gradient computation
         sample['net_input']['mode'] = 'eval'
+
+        if self.args.sample_break_mode == 'complete_doc':
+            self.split_doc(sample)
+
+        bs = sample['target'].shape[0]
+        # train_mask = (torch.FloatTensor(bs, 1).uniform_() > 0.5).float().cuda()
+        # test_mask = 1 - train_mask
+
+        # We need gradient computation
         if 'meta' in model.decoder.training_mode:
+
             with torch.set_grad_enabled(True):
-                model.decoder.task_embeddings.weight.data.zero_()
-                z_optimizer = model.decoder.z_optimizer
+
+                model.decoder.task_embeddings_eval.weight.data.zero_()
+                z_optimizer = model.decoder.z_optimizer_eval
                 set_learning_rate(z_optimizer, self.z_lr)
 
                 for i in range(self.num_grad_updates):
 
                     z_optimizer.zero_grad()
-                    sample['net_input']['meta'] = 'inner'
-                    loss, _, _ = criterion(model, sample)
+                    sample['net_input']['meta_mode'] = 'inner'
+                    # loss, sample_size, _ = criterion(model, sample, reduce=False)
+                    # train_loss = (loss.view(bs, -1) * train_mask).sum()
+                    # train_loss.backward()
+                    loss, sample_size, _ = criterion(model, sample)
                     loss.backward()
                     z_optimizer.step()
 
-            loss, sample_size, logging_output = criterion(model, sample)
-        else:
-            with torch.no_grad():
-                loss, sample_size, logging_output = criterion(model, sample)
+        loss, sample_size, logging_output = criterion(model, sample)
+
+        # if self.train_unseen_task:
+        #     loss, sample_size, logging_output = criterion(model, sample)
+        # else:
+        #     loss, sample_size, logging_output = criterion(model, sample, reduce=False)
+        #     test_loss = (loss.view(bs, -1) * test_mask).sum()
+        #     logging_output['loss'] = test_loss
+        #     for key in ['ntokens', 'nsentences', 'sample_size']:
+        #         logging_output[key] = logging_output[key]/2
 
         return loss, sample_size, logging_output
-

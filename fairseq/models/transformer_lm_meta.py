@@ -113,6 +113,10 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                             help='Maximum number of tasks.')
         parser.add_argument('--train_only_z', action='store_true',
                             help='Train only z.')
+        parser.add_argument('--task_emb_cond_type', default='encoder', type=str,
+                            help='Task emb conditioning type.')
+        parser.add_argument('--encoder_embed_dim', default=512, type=int,
+                            help='Task emb size.')
         # fmt: on
 
     @classmethod
@@ -147,11 +151,16 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                 args.adaptive_softmax_cutoff, args.adaptive_input_cutoff)
             assert args.decoder_input_dim == args.decoder_output_dim
 
+        if args.training_mode == 'task_agnostic' or args.task_emb_cond_type == 'decoder':
+            no_encoder_attn = True
+        else:
+            no_encoder_attn = False
+
         decoder = TransformerDecoderMeta(
             args,
             task.target_dictionary,
             embed_tokens,
-            no_encoder_attn=args.training_mode == 'task_agnostic'
+            no_encoder_attn=no_encoder_attn
         )
 
         if getattr(args, 'train_only_z', None) and args.train_only_z:
@@ -162,24 +171,6 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
             decoder.task_embedding_init.requires_grad = True
 
         return TransformerLanguageModelMeta(decoder)
-
-    def upgrade_state_dict_named(self, state_dict, name):
-
-        task_emb_size = None
-        for k in list(state_dict.keys()):
-            print(k)
-            if "task_embedding" in k:
-                print('Ignoring: ', k)
-                task_emb_size = state_dict[k].shape[-1]
-                del state_dict[k]
-
-        # if self.training_mode != 'task_agnostic':
-        #     print('Note: Initializing task embedding with zeros')
-        #     state_dict['task_embedding_init'] = torch.zeros(self.encoder_embed_dim)
-        if task_emb_size:
-            state_dict['decoder.task_embedding_init'] = torch.zeros(task_emb_size)
-
-        return state_dict
 
 
 @register_model_architecture('transformer_lm_meta', 'transformer_lm_meta')
@@ -195,7 +186,7 @@ def base_lm_architecture(args):
         args.no_decoder_final_norm = not args.decoder_final_norm
 
     args.dropout = getattr(args, 'dropout', 0.1)
-    args.attention_dropout = getattr(args, 'attention_dropout', 0.0)
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
 
     args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
@@ -235,52 +226,36 @@ def transformer_lm_meta_small(args):
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 128)
     args.decoder_layers = getattr(args, 'decoder_layers', 4)
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
-    args.dropout = getattr(args, 'dropout', 0.0)
-    args.attention_dropout = getattr(args, 'attention_dropout', 0.0)
     # args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', True)
     args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', True)
-    # args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0.0)
-    # args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '20000,40000')
-    # args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '50265')
     base_lm_architecture(args)
 
-@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_z32')
-def transformer_lm_meta_z32(args):
-    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 32)
-    transformer_lm_meta_small(args)
-
-@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_z8')
-def transformer_lm_meta_z8(args):
-    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 8)
-    transformer_lm_meta_small(args)
 
 @register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_iwslt')
 def transformer_lm_meta_iwslt(args):
-    args.encoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 512)
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 512)
     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 1024)
     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 4)
     args.decoder_layers = getattr(args, 'decoder_layers', 6)
-    args.dropout = getattr(args, 'dropout', 0.1)
-    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
     args.decoder_learned_pos = getattr(args, 'decoder_learned_pos', True)
     base_lm_architecture(args)
 
-# @register_model_architecture('transformer_lm_meta', 'transformer_lm_big')
-# def transformer_lm_big(args):
-#     args.decoder_layers = getattr(args, 'decoder_layers', 12)
-#     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 1024)
-#     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 4096)
-#     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 16)
-#     base_lm_architecture(args)
-# 
-# 
-# @register_model_architecture('transformer_lm_meta', 'transformer_lm_gpt2_small')
-# def transformer_lm_gpt2_small(args):
-#     args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 1024)
-#     args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 4096)
-#     args.decoder_layers = getattr(args, 'decoder_layers', 24)
-#     args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 16)
-#     args.dropout = getattr(args, 'dropout', 0.1)
-#     args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
-#     args.activation_fn = getattr(args, 'activation_fn', 'gelu')
-#     base_lm_architecture(args)
+
+@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_iwslt_z16')
+def transformer_lm_meta_iwslt_z16(args):
+    base_lm_architecture(args)
+
+
+@register_model_architecture('transformer_lm_meta', 'transformer_lm_meta_gpt')
+def transformer_lm_gpt(args):
+    args.decoder_embed_dim = getattr(args, 'decoder_embed_dim', 768)
+    args.decoder_ffn_embed_dim = getattr(args, 'decoder_ffn_embed_dim', 3072)
+    args.decoder_layers = getattr(args, 'decoder_layers', 12)
+    args.decoder_attention_heads = getattr(args, 'decoder_attention_heads', 12)
+    args.dropout = getattr(args, 'dropout', 0.1)
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
+    args.activation_fn = getattr(args, 'activation_fn', 'gelu')
+    args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', True)
+    base_lm_architecture(args)
+
