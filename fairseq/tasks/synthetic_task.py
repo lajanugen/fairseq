@@ -29,6 +29,20 @@ class SyntheticLMTask(ReviewTask):
                             help='Max tasks to precompute')
         parser.add_argument('--max_seq_len', default=16, type=int,
                             help='Maximum sequence length')
+        parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
+                            help='Tasks file.')
+        parser.add_argument('--vocab_size', default=10, type=int,
+                            help='Vocabulary size')
+        parser.add_argument('--num_train_tasks', default=5, type=int,
+                            help='Number of training tasks')
+        parser.add_argument('--num_test_tasks', default=5, type=int,
+                            help='Number of test tasks')
+        parser.add_argument('--num_train', default=10000, type=int,
+                            help='Num training examples')
+        parser.add_argument('--num_test', default=10000, type=int,
+                            help='Num test examples')
+        parser.add_argument('--sample_num_tasks', default=1, type=int,
+                            help='Num of tasks to sample for each iteration')
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -171,18 +185,17 @@ class SyntheticLMTask(ReviewTask):
         targets = sample['target']
         sample['net_input']['targets'] = targets
         sample['net_input']['split_data'] = split_data
-        sample['net_input']['num_tasks'] = self.sample_num_tasks
 
         outputs = model(**sample['net_input'])
 
         loss = outputs['post_loss_train']
-        outputs['nll_loss'] = loss
+        outputs['loss'] = loss
 
-        sample_size = sample['nsentences']
+        sample_size = sample['ntokens']
 
         logging_output = {
             'ntokens': sample['ntokens'],
-            'sample_size': sample['target'].size(0),
+            'sample_size': sample['ntokens'],
         }
 
         self.logging_diagnostics = outputs.keys()
