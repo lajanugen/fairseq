@@ -16,6 +16,7 @@ from fairseq.models import (
 from fairseq.models.transformer_sentence_encoder_taskemb import init_bert_params
 from fairseq.models.transformer_sentence_encoder_taskemb import TransformerSentenceEncoderTaskemb
 
+import higher
 
 # Note: the register_model "decorator" should immediately precede the
 # definition of the Model class.
@@ -288,7 +289,12 @@ class FairseqReviewLM(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
 
+
         self.model = LMClassifier(args, task)
+
+        if 'maml' in self.training_mode:
+            self.inner_opt =  optim.Adam(self.model.parameters(), lr=self.z_lr)
+
 
     def forward(
         self,
@@ -353,7 +359,7 @@ class FairseqReviewLM(BaseFairseqModel):
             else:
                 task_embeddings = self.task_embeddings
 
-        if self.training_mode == 'task_agnostic':
+        if self.training_mode == 'task_agnostic' or 'maml' in self.training_mode:
             attn_mask = subsequent_mask(targets.shape[1])
         else:
             attn_mask = subsequent_mask(targets.shape[1] + 1)
@@ -423,6 +429,33 @@ class FairseqReviewLM(BaseFairseqModel):
                     with open(self.log_losses, 'a') as f:
                         losses_str = '%s\n' % ' '.join(map(str, losses))
                         f.write(losses_str)
+
+        elif self.training_mode == 'maml' and mode == 'train':
+            step_size = self.z_lr
+            set_learning_rate(self.inner_opt, step_size)
+
+            outputs['num_grad_updates'] = 1.0 * self.num_grad_updates
+
+            with higher.innerloop_ctx(
+                self.model, self.inner_opt, copy_initial_weights=False
+            ) as (fnet, diffopt):
+                for _ in range(self.num_grad_updates):
+                    logits = fnet(
+                        src_tokens,
+                        attn_mask=attn_mask,
+                        task_embedding=None)
+
+                    loss = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
+                    diffopt.step(loss)
+
+                logits = fnet(
+                    src_tokens,
+                    attn_mask=attn_mask,
+                    task_embedding=None)
+
+                loss = compute_loss(logits, targets, mask=test_mask, loss_mask=loss_mask)
+                loss.backward()
+
 
         logits = self.model(
             src_tokens,
