@@ -155,6 +155,8 @@ class LanguageModelingMetaTask(FairseqTask):
                             help='Number of grad steps in inner loop')
         parser.add_argument('--LMinit', action='store_true',
                             help='LM init.')
+        parser.add_argument('--mdl', default='ff', type=str,
+                            help='Model type.')
         # fmt: on
 
     def __init__(self, args, dictionary, output_dictionary=None, targets=None):
@@ -168,6 +170,7 @@ class LanguageModelingMetaTask(FairseqTask):
         self.dataset_size = {}
         self.z_lr = args.z_lr
         self.num_grad_updates = args.num_grad_updates
+        self.mdl = args.mdl
 
         if targets is None:
             targets = ["future"]
@@ -251,16 +254,6 @@ class LanguageModelingMetaTask(FairseqTask):
         dataset = data_utils.load_indexed_dataset(
             split_path, self.dictionary, self.args.dataset_impl, combine=combine
         )
-        # dataset = IndexedRawTextDatasetCustom(
-        #     split_path, 
-        #     self.dictionary, 
-        #     eval_mode=self.train_unseen_task,
-        #     eval_task_id=self.eval_task_id)
-        # print('| loaded {} examples from: {}'.format(len(dataset), split_path))
-        # if dataset is None:
-        #     raise FileNotFoundError(
-        #         "Dataset not found: {} ({})".format(split, split_path)
-        #     )
 
         if self.train_unseen_task:
           assert self.args.sample_break_mode != 'complete_doc'
@@ -345,29 +338,47 @@ class LanguageModelingMetaTask(FairseqTask):
         tgt_reviews = []
         task_id = []
         count = 0
-        for i in range(sample['target'].shape[0]):
-            src = sample['net_input']['src_tokens'][i].cpu()
-            tgt = sample['target'][i].cpu()
 
-            review_boundaries = src.eq(self.dictionary.eos()).nonzero()
+        dim2 = sample['net_input']['src_tokens'].shape[1]
 
-            src_split = np.split(src, review_boundaries)
-            assert src_split[0].numel() == 0
-            src_split = src_split[1:]
-            src_reviews.extend(src_split)
+        src = sample['net_input']['src_tokens'].view(-1).cpu()
+        tgt = sample['target'].view(-1).cpu()
 
-            tgt_split = np.split(tgt, review_boundaries)
-            assert tgt_split[0].numel() == 0
-            tgt_split = tgt_split[1:]
-            tgt_reviews.extend(tgt_split)
+        review_boundaries = src.eq(self.dictionary.eos()).nonzero()
 
-            task_id.extend([count]*len(src_split))
-            count += 1
-    
+        src_split = np.split(src, review_boundaries)
+        assert src_split[0].numel() == 0
+        src_reviews = src_split[1:]
+
+        tgt_split = np.split(tgt, review_boundaries)
+        assert tgt_split[0].numel() == 0
+        tgt_reviews = tgt_split[1:]
+
+        task_id = (review_boundaries/dim2).long().view(-1).cuda()
+
+        # for i in range(sample['target'].shape[0]):
+        #     src = sample['net_input']['src_tokens'][i].cpu()
+        #     tgt = sample['target'][i].cpu()
+
+        #     review_boundaries = src.eq(self.dictionary.eos()).nonzero()
+
+        #     src_split = np.split(src, review_boundaries)
+        #     assert src_split[0].numel() == 0
+        #     src_split = src_split[1:]
+        #     src_reviews.extend(src_split)
+
+        #     tgt_split = np.split(tgt, review_boundaries)
+        #     assert tgt_split[0].numel() == 0
+        #     tgt_split = tgt_split[1:]
+        #     tgt_reviews.extend(tgt_split)
+
+        #     task_id.extend([count]*len(src_split))
+        #     count += 1
+
+        # task_id = torch.LongTensor(task_id).cuda()
+
         src_tokens = data_utils.collate_tokens(src_reviews, self.dictionary.pad()).cuda()
         target = data_utils.collate_tokens(tgt_reviews, self.dictionary.pad()).cuda()
-
-        task_id = torch.LongTensor(task_id).cuda()
     
         assert task_id.shape[0] == src_tokens.shape[0]
 
@@ -379,7 +390,7 @@ class LanguageModelingMetaTask(FairseqTask):
         model.train()
         sample['net_input']['mode'] = 'train'
         
-        if self.args.sample_break_mode == 'complete_doc':
+        if (self.args.sample_break_mode == 'complete_doc') and (self.mdl != 'snail'):
             self.split_doc(sample)
 
         if 'meta' in model.decoder.training_mode:
@@ -426,7 +437,7 @@ class LanguageModelingMetaTask(FairseqTask):
         model.eval()
         sample['net_input']['mode'] = 'eval'
 
-        if self.args.sample_break_mode == 'complete_doc':
+        if (self.args.sample_break_mode == 'complete_doc') and (self.mdl != 'snail'):
             self.split_doc(sample)
 
         bs = sample['target'].shape[0]
