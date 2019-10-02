@@ -262,6 +262,7 @@ class FairseqReviewLM(BaseFairseqModel):
         self.num_train_tasks = task.num_train_tasks
         self.num_test_tasks = task.num_test_tasks
         self.max_seq_len = task.max_seq_len
+        self.sample_num_tasks = task.sample_num_tasks
         # self.train_unseen_task = task.train_unseen_task
 
         if self.training_mode == 'multitask':
@@ -286,14 +287,15 @@ class FairseqReviewLM(BaseFairseqModel):
             self.z_optimizer_eval = optim.Adam(
                 self.task_embeddings_eval.parameters(), lr=self.z_lr)
 
-        elif self.training_mode == 'single_task':
+        elif self.training_mode == 'single_task' or self.training_mode == 'maml_z':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
-
 
         self.model = LMClassifier(args, task)
 
-        if 'maml' in self.training_mode:
-            self.inner_opt =  optim.Adam(self.model.parameters(), lr=self.z_lr)
+        if self.training_mode == 'maml':
+            self.inner_opt = optim.Adam(self.model.parameters(), lr=self.z_lr)
+        elif self.training_mode == 'maml_z':
+            self.inner_opt = optim.Adam(self.task_embedding_init, lr=self.z_lr)
 
 
     def forward(
@@ -359,7 +361,7 @@ class FairseqReviewLM(BaseFairseqModel):
             else:
                 task_embeddings = self.task_embeddings
 
-        if self.training_mode == 'task_agnostic' or 'maml' in self.training_mode:
+        if self.training_mode == 'task_agnostic' or self.training_mode == 'maml':
             attn_mask = subsequent_mask(targets.shape[1])
         else:
             attn_mask = subsequent_mask(targets.shape[1] + 1)
@@ -367,7 +369,7 @@ class FairseqReviewLM(BaseFairseqModel):
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
             task_embedding = task_embeddings(task_id)
-        elif self.training_mode == 'single_task':
+        elif self.training_mode == 'single_task' or self.training_mode == 'maml_z':
             task_embedding = self.task_embedding_init
         else:
             task_embedding = None
@@ -454,13 +456,14 @@ class FairseqReviewLM(BaseFairseqModel):
                     task_embedding=None)
 
                 loss = compute_loss(logits, targets, mask=test_mask, loss_mask=loss_mask)
+                loss /= self.sample_num_tasks
                 loss.backward()
 
 
         logits = self.model(
             src_tokens,
             attn_mask=attn_mask,
-            task_embedding=task_embedding.data if 'meta' in self.training_mode else task_embedding)
+            task_embedding=task_embedding.data if ('meta' in self.training_mode or self.training_mode == 'maml_z') else task_embedding)
 
         outputs['post_loss_train'] = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
         if 'pre_loss_train' in outputs:
@@ -480,7 +483,7 @@ class FairseqReviewLM(BaseFairseqModel):
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        if self.training_mode != 'task_agnostic':
+        if self.training_mode != 'task_agnostic' and self.training_mode != 'maml':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
 

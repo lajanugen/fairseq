@@ -121,11 +121,12 @@ class GW():
                                  self.sidelength))
         
         if path is None:
-            return (source, [raster(self.start_h, self.start_w, self.sidelength)]*self.gen_len)
+            return (source, [])
         else:
-            target = [raster(self.end_h, self.end_w, self.sidelength) + self.sidelength**2]*self.gen_len
             fpath = flatten(path,[])[::-1]
-            for i in range(min(len(fpath), self.gen_len)):
+            targetlen = min(len(fpath), self.gen_len)
+            target = [raster(self.end_h, self.end_w, self.sidelength) + self.sidelength**2]*targetlen
+            for i in range(targetlen):
                 target[i] = fpath[i] + self.sidelength**2
             return (source, target)
             
@@ -165,6 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--end_id", type=int, default=-1)
     parser.add_argument("--num_test_tasks", type=int, default=100)
     parser.add_argument("--examples_per_task", type=int, default=1500)
+    parser.add_argument("--gen_len", type=int, default=12)
     parser.add_argument("--save_path", default='/checkpoint/aszlam/laja/gridworld_tasks.pkl')
     args = parser.parse_args()
 
@@ -182,7 +184,7 @@ if __name__ == "__main__":
             f = open(args.tlist_path, 'rb')
             tlist = pickle.load(f)
       
-    generator = GW(sidelength=args.sidelength, num_blobs=args.num_blobs)
+    generator = GW(sidelength=args.sidelength, num_blobs=args.num_blobs, gen_len=args.gen_len)
     out = []
     if args.end_id == -1:
         end_id = ntasks
@@ -198,6 +200,8 @@ if __name__ == "__main__":
         task_out = []
         for j in range(args.examples_per_task):
             x = generator.generate()
+            while len(x[1]) == 0:
+                x = generator.generate()
             task_out.append(x)
         out.append(task_out)
 

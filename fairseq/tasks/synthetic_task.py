@@ -9,6 +9,7 @@ from collections import OrderedDict
 
 import numpy as np
 import torch
+import pickle
 
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
@@ -31,6 +32,10 @@ class SyntheticLMTask(ReviewTask):
                             help='Maximum sequence length')
         parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
                             help='Tasks file.')
+        parser.add_argument('--load_tasks_file_folder', default='', type=str,
+                            help='Tasks file base directory')
+        parser.add_argument('--load_from_pickle', action='store_true',
+                            help='load tasks and examples from a pickle file')
         parser.add_argument('--vocab_size', default=10, type=int,
                             help='Vocabulary size')
         parser.add_argument('--num_train_tasks', default=5, type=int,
@@ -43,6 +48,7 @@ class SyntheticLMTask(ReviewTask):
                             help='Num test examples')
         parser.add_argument('--sample_num_tasks', default=1, type=int,
                             help='Num of tasks to sample for each iteration')
+
 
     @classmethod
     def setup_task(cls, args, **kwargs):
@@ -64,21 +70,69 @@ class SyntheticLMTask(ReviewTask):
         self.num_train_tasks = args.num_train_tasks
         self.num_test_tasks = args.num_test_tasks
         self.sample_num_tasks = args.sample_num_tasks
+        self.load_from_pickle = args.load_from_pickle
 
-        task_generator = TaskGenerator(
-            self.max_tasks,
-            self.max_seq_len,
-            self.vocab_size)
-        task_descriptions = task_generator.load_tasks(args.load_tasks_file)
+        if self.load_from_pickle:
+            full_data = []
+            filelist = args.load_tasks_file.split(',')
+            for file in filelist:
+                f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
+                data = pickle.load(f)
+                f.close()
 
-        assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+                full_data.extend(data['data'])
 
-        if self.train_unseen_task:
+            assert len(full_data) >= self.num_train_tasks + 2 * self.num_test_tasks
+           
+            train_tasks = []
+            for task_data in full_data[:self.num_train_tasks]:
+                train = task_data[:self.num_train]
+                val = task_data[self.num_train:self.num_train+self.num_test]
+                test = task_data[-self.num_test:]
+                
+                train_tasks.append((train, val, test))
+
+            val_tasks = []
+            for task_data in full_data[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]:
+                train = task_data[:self.num_train]
+                val = task_data[self.num_train:self.num_train+self.num_test]
+                test = task_data[-self.num_test:]
+                
+                val_tasks.append((train, val, test))
+
+            test_tasks = []
+            for task_data in full_data[-self.num_test_tasks:]:
+                train = task_data[:self.num_train]
+                val = task_data[self.num_train:self.num_train+self.num_test]
+                test = task_data[-self.num_test:]
+                
+                test_tasks.append((train, val, test))
+        else:
+            task_generator = TaskGenerator(
+                self.max_tasks,
+                self.max_seq_len,
+                self.vocab_size)
+            task_descriptions = task_generator.load_tasks(args.load_tasks_file)
+
+            assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+ 
+            train_task_descriptions = task_descriptions[:self.num_train_tasks]
+            val_task_descriptions = task_descriptions[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]
             test_task_descriptions = task_descriptions[-self.num_test_tasks:]
 
+            print('Generating data...')
+            
+            train_tasks = task_generator.generate_data(
+                train_task_descriptions, self.num_train, self.num_test)
+            val_tasks = task_generator.generate_data(
+                val_task_descriptions, self.num_train, self.num_test)
             test_tasks = task_generator.generate_data(
                 test_task_descriptions, self.num_train, self.num_test)
+            
+            print('Done Generating data.')
 
+
+        if self.train_unseen_task:
             train_examples = [task[0] for task in test_tasks]
             val_examples = [task[1] for task in test_tasks]
             test_examples = [task[2] for task in test_tasks]
@@ -86,16 +140,6 @@ class SyntheticLMTask(ReviewTask):
             self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
 
         else:
-            train_task_descriptions = task_descriptions[:self.num_train_tasks]
-            val_task_descriptions = task_descriptions[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]
-
-            print('Generating data...')
-            train_tasks = task_generator.generate_data(
-                train_task_descriptions, self.num_train, self.num_test)
-            val_tasks = task_generator.generate_data(
-                val_task_descriptions, self.num_train, self.num_test)
-            print('Done Generating data.')
-
             train_examples = [task[0] for task in train_tasks]
             val_examples = [task[0] for task in val_tasks]
 
@@ -109,8 +153,9 @@ class SyntheticLMTask(ReviewTask):
         for instance in examples:
             orig_seq, transform_seq = instance
 
-            assert len(orig_seq) == self.max_seq_len
-            assert len(transform_seq) == self.max_seq_len
+            if not self.load_from_pickle:
+                assert len(orig_seq) == self.max_seq_len
+                assert len(transform_seq) == self.max_seq_len
 
             orig_seq = map(str, orig_seq)
             transform_seq = map(str, transform_seq)
@@ -127,6 +172,16 @@ class SyntheticLMTask(ReviewTask):
                 output_sequence = [self.vocab.pad()] + output_sequence
 
             assert len(input_sequence) == len(output_sequence)
+
+            # if loaded from pickle, the output might be of variant lengths.
+            # max_seq_len determines the maximum final length we want to keep
+            if self.load_from_pickle and len(input_sequence) < self.max_seq_len:
+                pad_len = self.max_seq_len - len(input_sequence)
+                input_sequence += [self.vocab.pad()] * pad_len
+                output_sequence += [self.vocab.pad()] * pad_len
+            elif self.load_from_pickle and len(input_sequence) > self.max_seq_len:
+                input_sequence = input_sequence[:self.max_seq_len]
+                output_sequence = output_sequence[:self.max_seq_len]
 
             # prepend task_id
             input_sequence = [task_id] + input_sequence
@@ -191,11 +246,12 @@ class SyntheticLMTask(ReviewTask):
         loss = outputs['post_loss_train']
         outputs['loss'] = loss
 
-        sample_size = sample['ntokens']
+        # only count the length of the actual target sequence, not including the input sequence
+        sample_size = targets.numel() - targets.eq(self.vocab.pad()).sum().item()  # sample['ntokens']
 
         logging_output = {
-            'ntokens': sample['ntokens'],
-            'sample_size': sample['ntokens'],
+            'ntokens': sample_size,
+            'sample_size': sample_size,
         }
 
         self.logging_diagnostics = outputs.keys()
