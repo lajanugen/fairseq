@@ -258,10 +258,10 @@ class LanguageModelingMetaTask(FairseqTask):
         if self.train_unseen_task:
           assert self.args.sample_break_mode != 'complete_doc'
           self.dataset_size[split] = len(dataset)
-          print("Data size %s: %d" % (split, len(dataset)))
           if ('train' in self.dataset_size) and ('valid' in self.dataset_size):
             assert self.dataset_size['train'] == self.dataset_size['valid']
           dataset = SubsetDataset(dataset, self.eval_task_id)
+          print("Data size %s: %d" % (split, len(dataset)))
 
         dataset = TokenBlockDataset(
             dataset,

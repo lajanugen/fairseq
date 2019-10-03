@@ -170,7 +170,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                 task_embedding = task_embedding.unsqueeze(0)
                 encoder_out = {
                     'encoder_out': task_embedding, # T x B x C
-                    'encoder_padding_mask': torch.zeros(bs, 1).bool().cuda() # B x T
+                    'encoder_padding_mask': torch.zeros(bs, 1, device=prev_output_tokens.device).bool() # B x T
                 }
             else:
                 assert self.task_emb_cond_type == 'decoder'
@@ -299,15 +299,17 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
             self.normalize = False
             state_dict[version_key] = torch.Tensor([1])
 
-        if self.LMinit and 'meta' in self.training_mode:
+        if self.LMinit: 
+          
+            if 'meta' in self.training_mode:
 
-            for i in range(len(self.layers)):
-                layer = self.layers[i]
-                for name, param in layer.named_parameters():
-                    if 'encoder_attn' in name:
-                        state_dict['decoder.layers.' + str(i) + '.' + name] = param.data
-            state_dict['decoder.task_embeddings.weight'] = self.task_embeddings.weight.data
-            state_dict['decoder.task_embeddings_eval.weight'] = self.task_embeddings.weight.data
+                for i in range(len(self.layers)):
+                    layer = self.layers[i]
+                    for name, param in layer.named_parameters():
+                        if 'encoder_attn' in name:
+                            state_dict['decoder.layers.' + str(i) + '.' + name] = param.data
+                state_dict['decoder.task_embeddings.weight'] = self.task_embeddings.weight.data
+                state_dict['decoder.task_embeddings_eval.weight'] = self.task_embeddings.weight.data
 
         else:
 
