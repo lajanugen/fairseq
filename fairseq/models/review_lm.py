@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 import importlib
 import numpy as np
 import torch
@@ -311,38 +312,11 @@ class FairseqReviewLM(BaseFairseqModel):
         mode='train'
     ):
 
-#        task_id = []
-#        all_reviews = []
-#
-#        input_tokens = src_tokens.cpu()
-#        for i in range(input_tokens.size(0)):
-#            review_boundaries = input_tokens[i].eq(self.task.vocab.eos()).nonzero()
-#            review_boundaries += 1 # Include eos
-#            reviews = np.split(input_tokens[i], review_boundaries)
-#            # reviews = reviews[1:]  # ignore the first one, it's empty because input_tokens begins with </s>
-#            reviews = reviews[:-1]
-#            # print('\n\nReviews for product {}:'.format(i))
-#            for review in reviews:
-#                # review_txt = self.task.vocab.string(review)
-#                # print(' - {}'.format(review_txt))
-#                task_id.append(i)
-#                review = pad_review_to_max_len(review, self.max_seq_len, self.task.vocab.pad())
-#                all_reviews.append(review)
-#            # print('%.2f %.2f' % (np.mean(review_lens), np.max(review_lens)))
-#            # for review in reviews:
-#            #     print(len(review))
-#            # print(len(reviews))
-
         bs = src_tokens.shape[0]
-#        task_id = torch.LongTensor(range(bs)).cuda()
         task_id = src_tokens[:, 0]
-#        src_tokens = torch.stack(all_reviews, 0)
-        bos_tensor = torch.LongTensor(bs, 1).fill_(self.task.vocab.bos())
 
-        # targets = src_tokens.cuda()
-        # targets = targets[:, 1:]
-        src_tokens = torch.cat((bos_tensor, src_tokens.cpu()[:, 1:-1]), dim=1).cuda()
-
+        targets = targets[:, 1:]
+        src_tokens = src_tokens[:, 1:-1]
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
