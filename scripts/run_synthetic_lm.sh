@@ -140,14 +140,14 @@ if [ $CLUSTER == "0" ]; then
   if [ $EVAL == "0" ]; then
     RUN="python fairseq_cli/train.py"
 	else
-    RUN="python train_multiple_tasks.py"
+    RUN="python train_multiple_tasks_v2.py"
 	fi
 else
   RUN="srun --job-name=$EXP_NAME --output=$CKPT_DIR/$EXP_NAME/train.log --error=$CKPT_DIR/$EXP_NAME/train.stderr --open-mode=append --unbuffered "
   if [ $EVAL == "0" ]; then
     RUN="$RUN python fairseq_cli/train.py"
 	else
-    RUN="$RUN python train_multiple_tasks.py"
+    RUN="$RUN python train_multiple_tasks_v2.py"
     # RUN="python train_multiple_tasks.py"
 	fi
   #RUN="srun --nodes=1 --gres=gpu:1 --partition=learnfair --time=30 python fairseq_cli/train.py"
@@ -172,8 +172,8 @@ ARGS="$ARGS \
 	/tmp/data/ \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--load_tasks_file /checkpoint/annl/transfer_learn_lm/tasks.txt \
-	--max-tokens 4096 \
+	--load_tasks_file /tmp/gen_tasks.txt \
+	--max-tokens 2048 \
 	--optimizer adam \
 	--encoder_type transformer \
 	--num_test $UNSEEN_NUM_TEST \
