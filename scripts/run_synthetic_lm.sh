@@ -172,7 +172,6 @@ ARGS="$ARGS \
 	/tmp/data/ \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
 	--load_tasks_file /checkpoint/annl/transfer_learn_lm/tasks.txt \
 	--max-tokens 4096 \
 	--optimizer adam \
@@ -184,10 +183,8 @@ ARGS="$ARGS \
 	--num_test_tasks $NUM_TEST_TASKS \
 	--max_tasks $MAX_TASKS \
 	--task_emb_cond_type cls_token \
-  --batch_version \
 	--clip-norm 5 \
 	--reset-dataloader \
-	--task_emb_init $TASK_EMB_INIT \
 	--z_lr $ZLR"
 
 mkdir -p $CKPT_DIR/$EXP_NAME

@@ -1,4 +1,4 @@
-from pdb import set_trace as bp
+import importlib
 import numpy as np
 import torch
 import torch.nn as nn
@@ -16,7 +16,8 @@ from fairseq.models import (
 from fairseq.models.transformer_sentence_encoder_taskemb import init_bert_params
 from fairseq.models.transformer_sentence_encoder_taskemb import TransformerSentenceEncoderTaskemb
 
-import higher
+if importlib.find_loader('higher') is not None:
+    import higher
 
 # Note: the register_model "decorator" should immediately precede the
 # definition of the Model class.
@@ -339,7 +340,7 @@ class FairseqReviewLM(BaseFairseqModel):
         bos_tensor = torch.LongTensor(bs, 1).fill_(self.task.vocab.bos())
 
         # targets = src_tokens.cuda()
-        targets = targets[:, 1:]
+        # targets = targets[:, 1:]
         src_tokens = torch.cat((bos_tensor, src_tokens.cpu()[:, 1:-1]), dim=1).cuda()
 
 

@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 # Copyright (c) Facebook, Inc. and its affiliates.
 #
 # This source code is licensed under the MIT license found in the
@@ -148,7 +149,7 @@ class SyntheticLMTask(ReviewTask):
 
     def construct_data(self, task_id, examples):
 
-        input_sentences, output_sentences, lengths = [], [], [] 
+        input_sentences, output_sentences, src_lengths, tgt_lengths = [], [], [], []
 
         for instance in examples:
             orig_seq, transform_seq = instance
@@ -185,30 +186,31 @@ class SyntheticLMTask(ReviewTask):
 
             # prepend task_id
             input_sequence = [task_id] + input_sequence
-            output_sequence = [task_id] + output_sequence
+            # output_sequence = [task_id] + output_sequence
            
             input_sentences.append(torch.LongTensor(input_sequence))
             output_sentences.append(torch.LongTensor(output_sequence))
-            lengths.append(len(input_sequence))
+            src_lengths.append(len(input_sequence))
+            tgt_lengths.append(len(output_sequence))
 
-        return input_sentences, output_sentences, lengths
+        return input_sentences, output_sentences, src_lengths, tgt_lengths
 
 
     def load_dataset(self, split, epoch=1, combine=False, **kwargs):
         if self.train_unseen_task:
             assert self.eval_task_id < self.num_test_tasks
 
-            input_sentences, output_sentences, lengths = self.construct_data(self.eval_task_id, self.examples[split][self.eval_task_id])
+            input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(self.eval_task_id, self.examples[split][self.eval_task_id])
 
             self.datasets[split] = LanguagePairDataset(
                 src=input_sentences,
-                src_sizes=lengths,
+                src_sizes=src_lengths,
                 src_dict=self.vocab,
                 tgt=output_sentences,
-                tgt_sizes=lengths,
+                tgt_sizes=tgt_lengths,
                 tgt_dict=self.vocab,
                 left_pad_source=False,
-                max_target_positions=lengths[0],
+                max_target_positions=tgt_lengths[0],
                 input_feeding=False,
             )
 
@@ -218,17 +220,17 @@ class SyntheticLMTask(ReviewTask):
             num_tasks = len(split_examples)
 
             for task_id in range(num_tasks):
-                input_sentences, output_sentences, lengths = self.construct_data(task_id, split_examples[task_id])
+                input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(task_id, split_examples[task_id])
 
                 dataset_map[task_id] = LanguagePairDataset(
                     src=input_sentences,
-                    src_sizes=lengths,
+                    src_sizes=src_lengths,
                     src_dict=self.vocab,
                     tgt=output_sentences,
-                    tgt_sizes=lengths,
+                    tgt_sizes=tgt_lengths,
                     tgt_dict=self.vocab,
                     left_pad_source=False,
-                    max_target_positions=lengths[0],
+                    max_target_positions=tgt_lengths[0],
                     input_feeding=False,
                 )
             self.datasets[split] = MultiCorpusSampledDataset(
@@ -247,7 +249,8 @@ class SyntheticLMTask(ReviewTask):
         outputs['loss'] = loss
 
         # only count the length of the actual target sequence, not including the input sequence
-        sample_size = targets.numel() - targets.eq(self.vocab.pad()).sum().item()  # sample['ntokens']
+        # sample_size = targets.numel() - targets.eq(self.vocab.pad()).sum().item()  # sample['ntokens']
+        sample_size = targets.ne(self.vocab.pad()).sum().item()
 
         logging_output = {
             'ntokens': sample_size,
