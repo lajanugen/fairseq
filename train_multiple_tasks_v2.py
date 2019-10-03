@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 #!/usr/bin/env python3 -u
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -27,17 +28,7 @@ from fairseq.meters import AverageMeter, StopwatchMeter
 def cross_validate(stats, no_training):
     best_train_accuracies = []
     val_accuracies = []
-
-    best_num_iters = None
-
-    if no_training:
-        num_iter_grid = [1]
-    else:
-        num_iter_grid = [10, 20, 30, 40, 50]
-
-    num_iter_perf = {}
-    for num_iter in num_iter_grid:
-        num_iter_perf[num_iter] = []
+    task_val_accuracies_all = []
 
     num_tasks = len(stats)
 
@@ -45,19 +36,13 @@ def cross_validate(stats, no_training):
         train_accs, val_accs = stats[i]
         task_train_accuracies = [float(train_accs[i]['ppl']) for i in range(len(train_accs))]
         task_val_accuracies = [float(val_accs[i]['ppl']) for i in range(len(val_accs))]
-
-        assert len(task_val_accuracies) == num_iter_grid[-1]
-
-        for num_iter in num_iter_grid:
-            num_iter_perf[num_iter].append(task_val_accuracies[num_iter - 1])
+        task_val_accuracies_all.append(task_val_accuracies)
 
         best_train_accuracies.append(min(task_train_accuracies))
         val_accuracies.append(min(task_val_accuracies))
 
-    avg_perf_grid = []
-    for num_iter in num_iter_grid:
-        avg_perf_grid.append(np.mean(num_iter_perf[num_iter]))
-    best_num_iters = num_iter_grid[np.argmin(avg_perf_grid)]
+    task_val_accuracies_mean = np.mean(task_val_accuracies_all, axis=0)
+    best_num_iters = np.argmin(task_val_accuracies_mean)
 
     val_accuracy = sum(val_accuracies) / len(val_accuracies)
     best_train_accuracy = sum(best_train_accuracies) / len(best_train_accuracies)
@@ -65,7 +50,7 @@ def cross_validate(stats, no_training):
     return val_accuracy, best_train_accuracy, best_num_iters
 
 
-def main(args, state=None, init_distributed=False):
+def main(args, examples, state=None, init_distributed=False):
     utils.import_user_module(args)
 
     assert args.max_tokens is not None or args.max_sentences is not None, \
@@ -80,9 +65,9 @@ def main(args, state=None, init_distributed=False):
 
     # Print args
     print(args)
-
-    # Setup task, e.g., translation, language modeling, etc.
-    task = tasks.setup_task(args)
+    
+    task = tasks.setup_task(args, load_data=False)
+    task.examples = examples
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
     for valid_sub_split in args.valid_subset.split(','):
@@ -321,7 +306,7 @@ def distributed_main(i, args, start_rank=0):
     main(args, init_distributed=True)
 
 
-def cli_main(args, state):
+def cli_main(args, examples, state):
     if args.distributed_init_method is None:
         distributed_utils.infer_init_method(args)
 
@@ -352,7 +337,7 @@ def cli_main(args, state):
         )
     else:
         # single GPU training
-        train_stats, valid_stats = main(args, state)
+        train_stats, valid_stats = main(args, examples, state=state)
 
     return train_stats, valid_stats
 
@@ -361,25 +346,29 @@ def master_main():
 
     stdout = sys.stdout
     f = open(os.devnull, 'w')
-    sys.stdout = f
+    # sys.stdout = f
 
     parser = options.get_training_parser()
     parser.add_argument("--fast-eval", action="store_true", help="Fast eval mode.")
     parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
     args = options.parse_args_and_arch(parser)
 
+    # Setup task, e.g., translation, language modeling, etc.
+    task_gen = tasks.setup_task(args)
+    examples = task_gen.examples
+
     no_training = args.no_training
     if no_training:
         args.max_epoch = 1
 
     if args.fast_eval:
-        best_num_iter = args.eval_num_iter
+        best_num_iter = args.eval_num_iter - 1
     else:
         restore_path = '/'.join(args.restore_file.split('/')[:-1])
 
         best_val = float('inf')
 
-        for ckpt in range(1, 11):
+        for ckpt in range(10, 101, 10):
             args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
             print(args.restore_file)
             print(os.path.exists(args.restore_file))
@@ -390,7 +379,7 @@ def master_main():
             for task in range(16):
                 args.eval_task_id = task
 
-                train_stats, valid_stats = cli_main(args, state)
+                train_stats, valid_stats = cli_main(args, examples, state)
                 all_stats.append((train_stats, valid_stats))
 
             val, best_train, num_iter = cross_validate(all_stats, no_training)
@@ -409,9 +398,9 @@ def master_main():
     for task in range(16, 64):
         args.eval_task_id = task
 
-        train_stats, valid_stats = cli_main(args, state)
-        train_accs.append(float(train_stats[best_num_iter-1]['ppl']))
-        test_accs.append(float(valid_stats[best_num_iter-1]['ppl']))
+        train_stats, valid_stats = cli_main(args, examples, state)
+        train_accs.append(float(train_stats[best_num_iter]['ppl']))
+        test_accs.append(float(valid_stats[best_num_iter]['ppl']))
 
     test = np.mean(test_accs)
     train = np.mean(train_accs)

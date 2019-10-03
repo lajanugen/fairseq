@@ -52,15 +52,15 @@ class SyntheticLMTask(ReviewTask):
 
 
     @classmethod
-    def setup_task(cls, args, **kwargs):
+    def setup_task(cls, args, load_data=True, **kwargs):
         vocab = Dictionary()
         for v in range(args.vocab_size):
             vocab.add_symbol(str(v))
         print('| dictionary: {} types'.format(len(vocab)))
 
-        return cls(args, vocab)
+        return cls(args, vocab, load_data)
 
-    def __init__(self, args, vocab):
+    def __init__(self, args, vocab, load_data=True):
         super().__init__(args, vocab)
 
         self.max_tasks = args.max_tasks
@@ -123,22 +123,26 @@ class SyntheticLMTask(ReviewTask):
 
             print('Generating data...')
             
-            train_tasks = task_generator.generate_data(
-                train_task_descriptions, self.num_train, self.num_test)
-            val_tasks = task_generator.generate_data(
-                val_task_descriptions, self.num_train, self.num_test)
-            test_tasks = task_generator.generate_data(
-                test_task_descriptions, self.num_train, self.num_test)
+            if load_data:
+                if self.train_unseen_task:
+                    test_tasks = task_generator.generate_data(
+                        test_task_descriptions, self.num_train, self.num_test)
+                else:
+                    train_tasks = task_generator.generate_data(
+                        train_task_descriptions, self.num_train, self.num_test)
+                    val_tasks = task_generator.generate_data(
+                        val_task_descriptions, self.num_train, self.num_test)
             
             print('Done Generating data.')
 
 
         if self.train_unseen_task:
-            train_examples = [task[0] for task in test_tasks]
-            val_examples = [task[1] for task in test_tasks]
-            test_examples = [task[2] for task in test_tasks]
+            if load_data:
+                train_examples = [task[0] for task in test_tasks]
+                val_examples = [task[1] for task in test_tasks]
+                test_examples = [task[2] for task in test_tasks]
 
-            self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
+                self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
 
         else:
             train_examples = [task[0] for task in train_tasks]
