@@ -42,22 +42,22 @@ case $key in
     -m|--mode)
     TRAINING_MODE=$2
     shift; shift; ;;
-  	--runmode)
+    --runmode)
     RUN_MODE=$2
-		shift; shift; ;;
-	  --no-training)
+    shift; shift; ;;
+    --no-training)
     NO_TRAINING=1
     shift; ;;
     -z|--zonly)
     TRAIN_ONLY_Z=1
     shift; ;;
     --lr) 
-	  LR=$2
+    LR=$2
     shift; shift; ;;
-  	--ztype)
-		TASK_EMB_COND_TYPE=$2
-		shift; shift; ;;
-  	--zlr)
+    --ztype)
+    TASK_EMB_COND_TYPE=$2
+    shift; shift; ;;
+    --zlr)
     ZLR=$2
     shift; shift; ;;
     -i|--init)
@@ -90,15 +90,15 @@ done
 ARGS="--task language_modeling_meta --arch transformer_lm_meta_gpt"
 
 if [ $RUN_MODE == "eval" ]; then
-  # RUN="python train_multiple_tasks_v2.py"
-  RUN="python train_multiple_tasks_v3.py"
-  EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
+    # RUN="python train_multiple_tasks_v2.py"
+    RUN="python train_multiple_tasks_v3.py"
+    EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
 elif [ $RUN_MODE == "sample" ]; then
-  RUN="python fairseq_cli/train.py"
-	# ARGS="$ARGS --LMinit"
+    RUN="python fairseq_cli/train.py"
+    # ARGS="$ARGS --LMinit"
 else
-  RUN="python fairseq_cli/train.py"
-	ARGS="$ARGS --LMinit"
+    RUN="python fairseq_cli/train.py"
+    ARGS="$ARGS --LMinit"
 fi
 
 ARGS="$ARGS --training_mode $TRAINING_MODE --lr $LR --encoder_embed_dim $TASK_EMB_SIZE --mdl $MODEL"
@@ -122,7 +122,7 @@ if [ "$DISABLE_VALID" == "1" ]; then ARGS="$ARGS --disable-validation"; fi
 if [ "$FASTEVAL" == "yes" ]; then ARGS="$ARGS --fast-eval --eval-num-iter 1"; fi
 	
 if [ ! -z $INIT_MDL ]; then
-  ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"
+    ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"
 fi
 
 if [ $LOGLOSS == "2" ]; then ARGS="$ARGS --log_losses $CKPT_DIR/$EXP_NAME/losses.txt"; fi
@@ -132,19 +132,19 @@ if [ $LOGLOSS == "2" ]; then ARGS="$ARGS --log_losses $CKPT_DIR/$EXP_NAME/losses
 #  --dataset-impl lazy \
 #  /home/llajan/fairseq/scripts/task_v3_bpe/ \
 ARGS="$ARGS \
-  /home/llajan/b6/amazon_reviews_v3/ \
-	--criterion cross_entropy \
-  --dataset-impl raw \
-  --save-dir $CKPT_DIR/$EXP_NAME \
-  --max-tokens 1024 \
-  --optimizer adam \
-  --max_tasks $MAX_TASKS \
-  --clip-norm 5 \
-  --reset-dataloader \
-  --num_grad_updates $NUM_GRAD_UPDATES \
-  --task_emb_cond_type $TASK_EMB_COND_TYPE \
-	--save-interval-updates 10000 \
-  --z_lr $ZLR"
+    /home/llajan/b6/amazon_reviews_v3/ \
+    --criterion cross_entropy \
+    --dataset-impl raw \
+    --save-dir $CKPT_DIR/$EXP_NAME \
+    --max-tokens 1024 \
+    --optimizer adam \
+    --max_tasks $MAX_TASKS \
+    --clip-norm 5 \
+    --reset-dataloader \
+    --num_grad_updates $NUM_GRAD_UPDATES \
+    --task_emb_cond_type $TASK_EMB_COND_TYPE \
+    --save-interval-updates 10000 \
+    --z_lr $ZLR"
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
@@ -153,7 +153,7 @@ echo $ARGS | tee $CKPT_DIR/$EXP_NAME/params.txt
 $RUN $ARGS
 
 if [ $RUN_MODE == "eval" ]; then
-  if [ ! -z $EXP_NAME ]; then
-    rm $CKPT_DIR/$EXP_NAME -rf
-  fi
+    if [ ! -z $EXP_NAME ]; then
+        rm $CKPT_DIR/$EXP_NAME -rf
+    fi
 fi
