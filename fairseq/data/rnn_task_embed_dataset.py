@@ -24,7 +24,7 @@ class ControllableElmanGenerator():
         for i in range(self.hdim):
             A[i,:] = self._A[i,:,:]@x
         u, s, v = torch.svd(A)
-        self.A = u
+        self.A = self.A = u@v.t()
                            
     def generate(self, n):
         h = self.init_h
