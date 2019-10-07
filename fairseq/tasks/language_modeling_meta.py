@@ -157,6 +157,10 @@ class LanguageModelingMetaTask(FairseqTask):
                             help='LM init.')
         parser.add_argument('--mdl', default='ff', type=str,
                             help='Model type.')
+        parser.add_argument('--task_emb_layer', default=-1, type=int,
+                            help='Layer at which task embedding is inserted.')
+        parser.add_argument('--freeze_bottom_layers', default=-1, type=int,
+                            help='Number of bottom layers to freeze.')
         # fmt: on
 
     def __init__(self, args, dictionary, output_dictionary=None, targets=None):
@@ -171,6 +175,7 @@ class LanguageModelingMetaTask(FairseqTask):
         self.z_lr = args.z_lr
         self.num_grad_updates = args.num_grad_updates
         self.mdl = args.mdl
+        self.task_emb_layer = args.task_emb_layer
 
         if targets is None:
             targets = ["future"]
@@ -400,10 +405,19 @@ class LanguageModelingMetaTask(FairseqTask):
             step_size = self.z_lr
             set_learning_rate(z_optimizer, step_size)
 
+            if self.task_emb_layer >= 0:
+                _, inner_states = model(**sample['net_input'])
+                inner_outputs = inner_states['inner_states'][self.task_emb_layer].data
+                cached_output = {'layer_idx': self.task_emb_layer, 'layer_output': inner_outputs}
+
+            sample['net_input']['meta_mode'] = 'inner'
+            if self.task_emb_layer >= 0:
+                sample['net_input']['cached_output'] = cached_output
+
             for i in range(self.num_grad_updates):
 
                 z_optimizer.zero_grad()
-                sample['net_input']['meta_mode'] = 'inner'
+
                 loss, sample_size, logging_output = criterion(model, sample)
 
                 loss.backward()

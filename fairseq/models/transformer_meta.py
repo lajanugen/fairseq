@@ -58,6 +58,8 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         self.output_embed_dim = args.decoder_output_dim
         self.dictionary = dictionary
         self.encoder_embed_dim = args.encoder_embed_dim
+        self.freeze_bottom_layers = args.freeze_bottom_layers
+        self.task_emb_layer = args.task_emb_layer
 
         padding_idx = embed_tokens.padding_idx
         self.max_target_positions = args.max_target_positions
@@ -74,8 +76,8 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
 
         self.layers = nn.ModuleList([])
         self.layers.extend([
-            TransformerDecoderLayer(args, no_encoder_attn)
-            for _ in range(args.decoder_layers)
+            TransformerDecoderLayer(args, no_encoder_attn or (layer_idx <= self.task_emb_layer))
+            for layer_idx in range(args.decoder_layers)
         ])
 
         self.adaptive_softmax = None
@@ -124,7 +126,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
             if args.encoder_embed_dim != args.decoder_embed_dim: 
                 self.task_emb_proj = nn.Linear(args.encoder_embed_dim, args.decoder_embed_dim)
 
-    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, mode='train', **unused):
+    def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, mode='train', cached_output=None, **unused):
         """
         Args:
             prev_output_tokens (LongTensor): previous decoder outputs of shape
@@ -141,7 +143,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         """
 
         bs = prev_output_tokens.shape[0]
-
+    
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
             task_embedding = self.task_embeddings(task_id)
@@ -150,7 +152,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                 task_embeddings = self.task_embeddings
             else:
                 task_embeddings = self.task_embeddings_eval
-
+    
             if meta_mode == 'outer':
                 task_embedding = task_embeddings(task_id).data
             else:
@@ -159,13 +161,13 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
             task_embedding = self.task_embedding_init
         else:
             task_embedding = None
-
+    
         if task_embedding is not None:
             if len(list(task_embedding.shape)) == 1:
                 task_embedding = task_embedding.unsqueeze(0)
             if task_embedding.shape[0] == 1:
                 task_embedding = task_embedding.expand(bs, -1)
-
+    
             if self.task_emb_cond_type == 'encoder':
                 task_embedding = task_embedding.unsqueeze(0)
                 encoder_out = {
@@ -178,7 +180,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                 if self.task_emb_proj is not None:
                     task_embedding = self.task_emb_proj(task_embedding)
 
-        x, extra = self.extract_features(prev_output_tokens, encoder_out, incremental_state, task_embedding=task_embedding)
+        x, extra = self.extract_features(prev_output_tokens, encoder_out, incremental_state, task_embedding=task_embedding, cached_output=cached_output)
         x = self.output_layer(x)
 
         if task_embedding is not None and self.task_emb_cond_type == 'decoder':
@@ -186,7 +188,7 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
 
         return x, extra
 
-    def extract_features(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_embedding=None, **unused):
+    def extract_features(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_embedding=None, cached_output=None, **unused):
         """
         Similar to *forward* but only return features.
 
@@ -195,6 +197,32 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                 - the decoder's features of shape `(batch, tgt_len, embed_dim)`
                 - a dictionary with any model-specific outputs
         """
+
+        if cached_output is not None:
+            layer_idx = cached_output['layer_idx']
+            x = cached_output['layer_output']
+
+            # decoder layers
+            for layer in self.layers[layer_idx + 1:]:
+                x, attn = layer(
+                    x,
+                    encoder_out['encoder_out'] if encoder_out is not None else None,
+                    encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
+                    incremental_state,
+                    self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
+                )
+
+            if self.layer_norm:
+                x = self.layer_norm(x)
+
+            # T x B x C -> B x T x C
+            x = x.transpose(0, 1)
+
+            if self.project_out_dim is not None:
+                x = self.project_out_dim(x)
+
+            return x, None
+
         # embed positions
         positions = self.embed_positions(
             prev_output_tokens,
@@ -226,7 +254,45 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         inner_states = [x]
 
         # decoder layers
-        for layer in self.layers:
+        for layer_idx, layer in enumerate(self.layers):
+            x, attn = layer(
+                x,
+                encoder_out['encoder_out'] if encoder_out is not None else None,
+                encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
+                incremental_state,
+                self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
+            )
+
+            if layer_idx == self.freeze_bottom_layers:
+                x = x.data
+
+            inner_states.append(x)
+
+        if self.layer_norm:
+            x = self.layer_norm(x)
+
+        # T x B x C -> B x T x C
+        x = x.transpose(0, 1)
+
+        if self.project_out_dim is not None:
+            x = self.project_out_dim(x)
+
+        return x, {'attn': attn, 'inner_states': inner_states}
+
+    def extract_features_intermediate(self, layer_idx, layer_output, encoder_out=None, incremental_state=None, task_embedding=None, **unused):
+        """
+        Similar to *forward* but only return features.
+
+        Returns:
+            tuple:
+                - the decoder's features of shape `(batch, tgt_len, embed_dim)`
+                - a dictionary with any model-specific outputs
+        """
+
+        x = layer_output
+
+        # decoder layers
+        for layer in self.layers[layer_idx + 1:]:
             x, attn = layer(
                 x,
                 encoder_out['encoder_out'] if encoder_out is not None else None,
@@ -310,6 +376,9 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
                             state_dict['decoder.layers.' + str(i) + '.' + name] = param.data
                 state_dict['decoder.task_embeddings.weight'] = self.task_embeddings.weight.data
                 state_dict['decoder.task_embeddings_eval.weight'] = self.task_embeddings.weight.data
+
+            if (not self.share_input_output_embed) and ('decoder.embed_out' not in state_dict):
+                state_dict['decoder.embed_out'] = state_dict['decoder.embed_tokens.weight']
 
         else:
 

@@ -117,6 +117,8 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                             help='Task emb conditioning type.')
         parser.add_argument('--encoder_embed_dim', default=512, type=int,
                             help='Task emb size.')
+        parser.add_argument('--share_decoder_input_output_embed', action='store_true',
+                            help='Share decoder input and output layers.')
         # fmt: on
 
     @classmethod
@@ -256,6 +258,6 @@ def transformer_lm_gpt(args):
     args.dropout = getattr(args, 'dropout', 0.1)
     args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
     args.activation_fn = getattr(args, 'activation_fn', 'gelu')
-    args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', True)
+    # args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', True)
     base_lm_architecture(args)
 
