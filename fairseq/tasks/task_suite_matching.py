@@ -9,11 +9,11 @@ from fairseq.tasks.task_suite_base import TaskSuiteBase
 class TaskSuite_matching_ctx_meta(TaskSuiteBase):
 
     @classmethod
-    def setup_task(cls, args, **kwargs):
-        return TaskSuite_matching_ctx_meta(args)
+    def setup_task(cls, args, load_data=True, **kwargs):
+        return TaskSuite_matching_ctx_meta(args, load_data)
 
-    def __init__(self, args):
-        super().__init__(args)
+    def __init__(self, args, load_data=True):
+        super().__init__(args, load_data)
         self.output_vocab_size = 1
 
     def construct_data_train(self, task_id, examples):

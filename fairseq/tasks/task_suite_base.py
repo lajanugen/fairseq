@@ -64,7 +64,7 @@ class TaskSuiteBase(FairseqTask):
                             help='Location to write task descriptions')
         parser.add_argument('--eval_task_id', default=0, type=int,
                             help='Identifier of meta eval task')
-        parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
+        parser.add_argument('--load_tasks_file', default='/tmp/tasks.txt', type=str,
                             help='Tasks file.')
         parser.add_argument('--all_task_examples', action='store_true',
                             help='Feed all task training examples as input.')
@@ -72,14 +72,14 @@ class TaskSuiteBase(FairseqTask):
                             help='No fine-tuning.')
 
     @classmethod
-    def setup_task(cls, args, **kwargs):
+    def setup_task(cls, args, load_data=True, **kwargs):
         # Here we can perform any setup required for the task. This may include
         # loading Dictionaries, initializing shared Embedding layers, etc.
         # In this case we'll just load the Dictionaries.
 
-        return TaskSuiteBase(args)
+        return TaskSuiteBase(args, load_data)
 
-    def __init__(self, args):
+    def __init__(self, args, load_data=True):
         super().__init__(args)
         # self.task = simple_count_task
         self.num_train = args.num_train
@@ -99,44 +99,45 @@ class TaskSuiteBase(FairseqTask):
         self.max_tasks = args.max_tasks
         assert self.num_train_tasks + self.num_test_tasks < self.max_tasks
 
-        task_generator = TaskGenerator(
-            self.max_tasks,
-            self.num_train,
-            self.max_seq_len,
-            self.vocab_size,
-            self.num_classes,
-            args.task_descriptions_dir)
-        task_descriptions = task_generator.load_tasks(args.load_tasks_file)
-
-        assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
-
-        if self.train_unseen_task:
-            test_task_descriptions = task_descriptions[-self.num_test_tasks:]
-
-            test_tasks = task_generator.generate_data(
-                test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
-
-            train_examples = [task[0] for task in test_tasks]
-            val_examples = [task[1] for task in test_tasks]
-            test_examples = [task[2] for task in test_tasks]
-
-            self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
-
-        else:
-            train_task_descriptions = task_descriptions[:self.num_train_tasks]
-            val_task_descriptions = task_descriptions[self.num_train_tasks + 1:self.num_train_tasks + self.num_test_tasks]
-
-            print('Generating data...')
-            train_tasks = task_generator.generate_data(
-                train_task_descriptions, self.num_train, self.num_test)
-            val_tasks = task_generator.generate_data(
-                val_task_descriptions, self.num_train, self.num_test)
-            print('Done Generating data.')
-
-            train_examples = [task[0] for task in train_tasks]
-            val_examples = [task[0] for task in val_tasks]
-
-            self.examples = {'train': train_examples, 'valid': val_examples}
+        if load_data:
+            task_generator = TaskGenerator(
+                self.max_tasks,
+                self.num_train,
+                self.max_seq_len,
+                self.vocab_size,
+                self.num_classes,
+                args.task_descriptions_dir)
+            task_descriptions = task_generator.load_tasks(args.load_tasks_file)
+    
+            assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+    
+            if self.train_unseen_task:
+                test_task_descriptions = task_descriptions[-self.num_test_tasks:]
+    
+                test_tasks = task_generator.generate_data(
+                    test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
+    
+                train_examples = [task[0] for task in test_tasks]
+                val_examples = [task[1] for task in test_tasks]
+                test_examples = [task[2] for task in test_tasks]
+    
+                self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
+    
+            else:
+                train_task_descriptions = task_descriptions[:self.num_train_tasks]
+                val_task_descriptions = task_descriptions[self.num_train_tasks + 1:self.num_train_tasks + self.num_test_tasks]
+    
+                print('Generating data...')
+                train_tasks = task_generator.generate_data(
+                    train_task_descriptions, self.num_train, self.num_test)
+                val_tasks = task_generator.generate_data(
+                    val_task_descriptions, self.num_train, self.num_test)
+                print('Done Generating data.')
+    
+                train_examples = [task[0] for task in train_tasks]
+                val_examples = [task[0] for task in val_tasks]
+    
+                self.examples = {'train': train_examples, 'valid': val_examples}
 
         max_seq_len = self.max_seq_len
         vocab_size = self.vocab_size

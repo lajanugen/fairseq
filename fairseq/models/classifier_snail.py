@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import higher
+# import higher
 
 from fairseq import utils
 from fairseq.models.classifier import Classifier
@@ -369,7 +369,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             attn_mask = 1 - attn_mask
 
-            attn_mask.masked_fill_(attn_mask.byte(), float('-inf'))
+            attn_mask.masked_fill_(attn_mask.bool(), float('-inf'))
 
         else:
 
@@ -389,7 +389,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             attn_mask = subsequent_mask(single_seq_len).float().cuda()
             attn_mask = 1 - attn_mask
-            attn_mask.masked_fill_(attn_mask.byte(), float('-inf'))
+            attn_mask.masked_fill_(attn_mask.bool(), float('-inf'))
 
             cls_mask = torch.cat((torch.zeros(single_seq_len - 1), torch.ones(1)), 0).cuda()
 
@@ -481,8 +481,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        print('Note: Initializing task embedding with zeros')
         if 'snail' not in self.training_mode:
+            print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
 
         return state_dict

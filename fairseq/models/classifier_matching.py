@@ -29,8 +29,8 @@ def compute_accuracy(logits, src_labels, query_labels, mask=None):
 
     for i in range(num_classes):
 
-        target_mask = src_labels.eq(i)
-        target_logits = logits.masked_fill((1 - target_mask).byte(), float('-inf'))
+        target_mask = src_labels.eq(i).float()
+        target_logits = logits.masked_fill((1 - target_mask).bool(), float('-inf'))
         logprobs.append(target_logits.logsumexp(-1, keepdim=True))
 
     logprobs = torch.cat(logprobs, -1)
@@ -57,15 +57,15 @@ def compute_loss(logits, src_labels, query_labels, mask=None):
 
     logits = logits.view(query_labels.shape[0], -1)
 
-    target_mask = src_labels.eq(query_labels)
+    target_mask = src_labels.eq(query_labels).float()
 
-    target_logits = logits.masked_fill((1 - target_mask).byte(), float('-inf'))
+    target_logits = logits.masked_fill((1 - target_mask).bool(), float('-inf'))
 
     loss = -target_logits.logsumexp(-1) + logits.logsumexp(-1)
 
     inf_mask = (target_mask.sum(-1) > 0).float()
 
-    loss.masked_fill_((1 - inf_mask).byte(), 0)
+    loss.masked_fill_((1 - inf_mask).bool(), 0)
 
     if mask is not None:
         mask = mask.view(-1)
@@ -459,8 +459,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        print('Note: Initializing task embedding with zeros')
         if 'matching' not in self.training_mode:
+            print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
 
         return state_dict

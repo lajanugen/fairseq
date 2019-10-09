@@ -369,7 +369,7 @@ def master_main():
 
     stdout = sys.stdout
     f = open(os.devnull, 'w')
-    sys.stdout = f
+    # sys.stdout = f
 
     parser = options.get_training_parser()
     args = options.parse_args_and_arch(parser)
@@ -378,10 +378,12 @@ def master_main():
     best_val = float('-inf')
 
     for ckpt in range(10, 101, 10):
+        print(ckpt)
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
 
         all_stats = []
         for task in range(16):
+            print(ckpt, task)
             args.eval_task_id = task
 
             train_stats, valid_stats = cli_main(args)
@@ -398,11 +400,12 @@ def master_main():
 
     train_accs, test_accs = [], []
     for task in range(16, 64):
+        print(best_ckpt, task)
         args.eval_task_id = task
 
         train_stats, valid_stats = cli_main(args)
-        train_accs.append(train_stats[best_num_iter]['post_accuracy_train'])
-        test_accs.append(valid_stats[best_num_iter]['post_accuracy_train'])
+        train_accs.append(train_stats[best_num_iter-1]['post_accuracy_train'])
+        test_accs.append(valid_stats[best_num_iter-1]['post_accuracy_train'])
 
     test = np.mean(test_accs)
     train = np.mean(train_accs)

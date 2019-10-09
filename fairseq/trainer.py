@@ -193,6 +193,68 @@ class Trainer(object):
 
         return extra_state
 
+    def load_checkpoint_from_state(
+        self,
+        state,
+        reset_optimizer=False,
+        reset_lr_scheduler=False,
+        optimizer_overrides=None,
+        reset_meters=False,
+        filename=None
+    ):
+        """Load all training state from a checkpoint file."""
+        extra_state, self._optim_history, last_optim_state = None, [], None
+
+        # load model parameters
+        try:
+            self.get_model().load_state_dict(state['model'], strict=True)
+        except Exception:
+            raise Exception(
+                'Cannot load model parameters from checkpoint, '
+                'please ensure that the architectures match.'
+            )
+
+        extra_state = state['extra_state']
+        self._optim_history = state['optimizer_history']
+        last_optim_state = state['last_optimizer_state']
+
+        if last_optim_state is not None and not reset_optimizer:
+            # rebuild optimizer after loading model, since params may have changed
+            self._build_optimizer()
+
+            # only reload optimizer and lr_scheduler if they match
+            last_optim = self._optim_history[-1]
+            assert last_optim['criterion_name'] == self.criterion.__class__.__name__, \
+                'Criterion does not match; please reset the optimizer (--reset-optimizer).'
+            assert last_optim['optimizer_name'] == self.optimizer.__class__.__name__, \
+                'Optimizer does not match; please reset the optimizer (--reset-optimizer).'
+
+            if not reset_lr_scheduler:
+                self.lr_scheduler.load_state_dict(last_optim['lr_scheduler_state'])
+            self.optimizer.load_state_dict(last_optim_state, optimizer_overrides)
+
+            self.set_num_updates(last_optim['num_updates'])
+
+        if extra_state is not None:
+            epoch = extra_state['train_iterator']['epoch']
+            print('| loaded checkpoint {} (epoch {} @ {} updates)'.format(
+                filename, epoch, self.get_num_updates()))
+
+            self.lr_step(epoch)
+
+            if 'train_meters' in extra_state:
+                self.meters.update(extra_state['train_meters'])
+                del extra_state['train_meters']
+
+                # reset TimeMeters, since their start times don't make sense anymore
+                for meter in self.meters.values():
+                    if isinstance(meter, TimeMeter):
+                        meter.reset()
+        else:
+            print('| no existing checkpoint found {}'.format(filename))
+
+        return extra_state
+
     def get_train_iterator(self, epoch, combine=True):
         """Return an EpochBatchIterator over the training set for a given epoch."""
         print('| loading train data for epoch {}'.format(epoch))

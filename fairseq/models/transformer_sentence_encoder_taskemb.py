@@ -1,3 +1,4 @@
+from pdb import set_trace as bp
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
 #
@@ -214,6 +215,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                 task_embedding = task_embedding.unsqueeze(1)
                 if cls_mask is None:
                     x = torch.cat((task_embedding, x[:, 1:]), dim=1)
+            elif self.task_emb_cond_type == 'cls_token':
+                task_embedding = task_embedding.unsqueeze(0)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)
@@ -257,6 +260,15 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                 self_attn_padding_mask=padding_mask,
                 task_emb=task_embedding if self.task_emb_cond_type == 'attention' else None
             )
+
+            if self.task_emb_cond_type == 'adapt':
+                task_emb_downproj = task_embedding[:, :self.embedding_dim]
+                task_emb_upproj = task_embedding[:, -self.embedding_dim:]
+                adapt = (x * task_emb_downproj).sum(-1, keepdim=True)
+                adapt = F.relu(adapt)
+                adapt = adapt * task_emb_upproj
+                x = x + adapt
+
             if not last_state_only:
                 inner_states.append(x)
 

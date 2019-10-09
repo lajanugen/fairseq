@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import higher
+# import higher
 
 from fairseq import utils
 from fairseq.models.classifier import Classifier
@@ -208,6 +208,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
 
+        else:
+            assert self.training_mode == 'task_agnostic'
+
         self.model = Classifier(args, task)
 
     def forward(
@@ -265,41 +268,18 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
         else:
+            assert self.training_mode == 'task_agnostic'
             task_embedding = None
 
         if 'meta' in self.training_mode:
 
             if num_tasks:
 
-                if self.training_mode == 'meta_avginit':
-                    if mode == 'eval':
-                        mean_task_embedding = self.task_embeddings.weight.data.mean(0)
-                        self.task_embeddings_eval.weight.data.copy_(mean_task_embedding)
-                    else:
-                        task_embedding_sum = self.task_embeddings.weight.data.sum(0)
-                        sample_task_embeddings = self.task_embeddings(task_id).data
-                        loo_task_embedding_sum = task_embedding_sum.view(1, -1) - sample_task_embeddings
-                        sample_mean_task_embeddings = loo_task_embedding_sum / (self.num_train_tasks - 1)
-                        self.task_embeddings.weight.data[task_id] = sample_mean_task_embeddings
-                        # self.task_embeddings.weight.data[task_id] = self.task_embeddings.weight.data.mean(0)
-
-                elif self.training_mode == 'meta_randinit':
-                    if mode == 'eval':
-                        self.task_embeddings_eval.weight.data.uniform_()
-                    else:
-                        self.task_embeddings.weight.data.uniform_()
-
-                elif self.training_mode == 'meta_zeroinit':
+                if self.training_mode == 'meta':
                     if mode == 'eval':
                         self.task_embeddings_eval.weight.data.zero_()
                     else:
                         self.task_embeddings.weight.data.zero_()
-
-                elif self.training_mode == 'meta_onesinit':
-                    if mode == 'eval':
-                        self.task_embeddings_eval.weight.data.fill_(1)
-                    else:
-                        self.task_embeddings.weight.data.fill_(1)
 
                 elif self.training_mode == 'meta_bprop':
                     task_embeddings = torch.zeros(
@@ -412,18 +392,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        if self.task_emb_init == 'mean':
-            print('Note: Initializing task embedding with mean')
-            state_dict['task_embedding_init'] = mean_task_emb
-        elif self.task_emb_init == 'random':
-            print('Note: Initializing task embedding randomly')
-            state_dict['task_embedding_init'] = torch.randn(self.task_emb_size)
-        elif self.task_emb_init == 'zeros':
+        if self.training_mode != 'task_agnostic':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
-        elif self.task_emb_init == 'uniform':
-            print('Note: Initializing task embedding with random uniform')
-            state_dict['task_embedding_init'] = torch.FloatTensor(self.task_emb_size).uniform_()
 
         return state_dict
 
