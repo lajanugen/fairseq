@@ -142,5 +142,7 @@ echo $ARGS | tee $CKPT_DIR/$EXP_NAME/params.txt
 $RUN $ARGS
 
 if [ $EVAL == "1" ]; then
-    rm $CKPT_DIR/$EXP_NAME -rf
+    if [ ! -z $EXP_NAME ]; then
+        rm $CKPT_DIR/$EXP_NAME -rf
+    fi
 fi

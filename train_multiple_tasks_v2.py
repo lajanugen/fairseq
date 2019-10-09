@@ -346,7 +346,7 @@ def master_main():
 
     stdout = sys.stdout
     f = open(os.devnull, 'w')
-    # sys.stdout = f
+    sys.stdout = f
 
     parser = options.get_training_parser()
     parser.add_argument("--fast-eval", action="store_true", help="Fast eval mode.")
@@ -412,7 +412,7 @@ def master_main():
         print('%.2f %.2f %d' % (test, train, best_num_iter))
     else:
         print('test, train, best_val, best_train, best_num_iter, best_ckpt')
-        print('%.2f %.2f %.2f %.2f %d %d' % (test, train, val, best_train, best_num_iter, best_ckpt))
+        print('%s %d %.2f %.2f %.2f %.2f %d %d' % (restore_path, args.num_train, test, train, val, best_train, best_num_iter, best_ckpt))
 
 
 if __name__ == '__main__':

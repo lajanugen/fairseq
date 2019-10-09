@@ -135,21 +135,19 @@ class SyntheticLMTask(ReviewTask):
             
             print('Done Generating data.')
 
-
-        if self.train_unseen_task:
-            if load_data:
+        if load_data:
+            if self.train_unseen_task:
                 train_examples = [task[0] for task in test_tasks]
                 val_examples = [task[1] for task in test_tasks]
                 test_examples = [task[2] for task in test_tasks]
 
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
 
-        else:
-            train_examples = [task[0] for task in train_tasks]
-            val_examples = [task[0] for task in val_tasks]
+            else:
+                train_examples = [task[0] for task in train_tasks]
+                val_examples = [task[0] for task in val_tasks]
 
-            self.examples = {'train': train_examples, 'valid': val_examples}
-
+                self.examples = {'train': train_examples, 'valid': val_examples}
 
     def construct_data(self, task_id, examples):
 
