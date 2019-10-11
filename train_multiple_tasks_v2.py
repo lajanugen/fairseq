@@ -1,4 +1,3 @@
-from pdb import set_trace as bp
 #!/usr/bin/env python3 -u
 # Copyright (c) 2017-present, Facebook, Inc.
 # All rights reserved.
@@ -44,7 +43,7 @@ def cross_validate(stats, no_training):
     task_val_accuracies_mean = np.mean(task_val_accuracies_all, axis=0)
     best_num_iters = np.argmin(task_val_accuracies_mean)
 
-    val_accuracy = sum(val_accuracies) / len(val_accuracies)
+    val_accuracy = task_val_accuracies_mean[best_num_iters] 
     best_train_accuracy = sum(best_train_accuracies) / len(best_train_accuracies)
 
     return val_accuracy, best_train_accuracy, best_num_iters

@@ -347,6 +347,7 @@ class FairseqReviewLM(BaseFairseqModel):
         elif self.training_mode == 'single_task' or self.training_mode == 'maml_z':
             task_embedding = self.task_embedding_init
         else:
+            assert self.training_mode == 'task_agnostic'
             task_embedding = None
 
         if 'meta' in self.training_mode:
