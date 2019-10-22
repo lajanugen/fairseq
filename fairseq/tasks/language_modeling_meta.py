@@ -417,7 +417,7 @@ class LanguageModelingMetaTask(FairseqTask):
 
             for param in model.decoder.parameters():
                 param.requires_grad = False
-            model.decoder.task_embeddings.requires_grad = True
+            model.decoder.task_embeddings.weight.requires_grad = True
 
             num_grad_updates = self.num_grad_updates
             best_loss = float('inf')
@@ -436,9 +436,9 @@ class LanguageModelingMetaTask(FairseqTask):
                     num_grad_updates = i
             model.decoder.task_embeddings.weight.data.copy_(best_embeddings)
 
-        sample['net_input']['meta_mode'] = 'outer'
         for param in model.decoder.parameters():
             param.requires_grad = True
+        sample['net_input']['meta_mode'] = 'outer'
         optimizer.zero_grad()
         if self.freeze_bottom_layers >= 0:
             sample['net_input']['cached_output'] = None
