@@ -176,6 +176,7 @@ class LanguageModelingMetaTask(FairseqTask):
         self.num_grad_updates = args.num_grad_updates
         self.mdl = args.mdl
         self.task_emb_layer = args.task_emb_layer
+        self.freeze_bottom_layers = args.freeze_bottom_layers
 
         if targets is None:
             targets = ["future"]
@@ -403,7 +404,7 @@ class LanguageModelingMetaTask(FairseqTask):
             z_optimizer = model.decoder.z_optimizer
 
             step_size = self.z_lr
-            set_learning_rate(z_optimizer, step_size)
+            # set_learning_rate(z_optimizer, step_size)
 
             if self.task_emb_layer >= 0:
                 _, inner_states = model(**sample['net_input'])
@@ -414,6 +415,12 @@ class LanguageModelingMetaTask(FairseqTask):
             if self.task_emb_layer >= 0:
                 sample['net_input']['cached_output'] = cached_output
 
+            for param in model.decoder.parameters():
+                param.requires_grad = False
+            model.decoder.task_embeddings.requires_grad = True
+
+            num_grad_updates = self.num_grad_updates
+            best_loss = float('inf')
             for i in range(self.num_grad_updates):
 
                 z_optimizer.zero_grad()
@@ -423,22 +430,21 @@ class LanguageModelingMetaTask(FairseqTask):
                 loss.backward()
                 z_optimizer.step()
 
-                if i == 0:
-                    prev_loss = loss.item()
-                else:
-                    cur_loss = loss.item()
-
-                    if cur_loss > prev_loss:
-                        step_size /= 2
-                        set_learning_rate(z_optimizer, step_size)
-                        if step_size < 1e-6:
-                            break
-
-                    prev_loss = cur_loss
+                if loss.item() < best_loss:
+                    best_loss = loss.item()
+                    best_embeddings = model.decoder.task_embeddings.weight.data
+                    num_grad_updates = i
+            model.decoder.task_embeddings.weight.data.copy_(best_embeddings)
 
         sample['net_input']['meta_mode'] = 'outer'
+        for param in model.decoder.parameters():
+            param.requires_grad = True
         optimizer.zero_grad()
+        if self.freeze_bottom_layers >= 0:
+            sample['net_input']['cached_output'] = None
         loss, sample_size, logging_output = criterion(model, sample)
+        if 'meta' in model.decoder.training_mode:
+            logging_output['num_grad_updates'] = num_grad_updates
         if ignore_grad:
             loss *= 0
 
@@ -465,7 +471,7 @@ class LanguageModelingMetaTask(FairseqTask):
 
                 model.decoder.task_embeddings_eval.weight.data.zero_()
                 z_optimizer = model.decoder.z_optimizer_eval
-                set_learning_rate(z_optimizer, self.z_lr)
+                # set_learning_rate(z_optimizer, self.z_lr)
 
                 for i in range(self.num_grad_updates):
 
@@ -479,6 +485,8 @@ class LanguageModelingMetaTask(FairseqTask):
                     z_optimizer.step()
 
         loss, sample_size, logging_output = criterion(model, sample)
+        if 'meta' in model.decoder.training_mode:
+            logging_output['num_grad_updates'] = self.num_grad_updates
 
         # if self.train_unseen_task:
         #     loss, sample_size, logging_output = criterion(model, sample)
@@ -490,3 +498,10 @@ class LanguageModelingMetaTask(FairseqTask):
         #         logging_output[key] = logging_output[key]/2
 
         return loss, sample_size, logging_output
+
+    def aggregate_logging_outputs(self, logging_outputs, criterion):
+        agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
+        for other_metrics in ['num_grad_updates']:
+            agg_logging_outputs[other_metrics] = sum(
+                log[other_metrics] for log in logging_outputs if other_metrics in log)
+        return agg_logging_outputs 
