@@ -440,8 +440,6 @@ class LanguageModelingMetaTask(FairseqTask):
             param.requires_grad = True
         sample['net_input']['meta_mode'] = 'outer'
         optimizer.zero_grad()
-        if self.freeze_bottom_layers >= 0:
-            sample['net_input']['cached_output'] = None
         loss, sample_size, logging_output = criterion(model, sample)
         if 'meta' in model.decoder.training_mode:
             logging_output['num_grad_updates'] = num_grad_updates
