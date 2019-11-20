@@ -1,11 +1,27 @@
 import gzip
 import pickle
 
-review_path = '/home/llajan/b6/aggressive_dedup.json.gz'
-meta_path ='/home/llajan/b6/metadata.json'
+review_path = '/mnt/brain4/datasets/amazon_reviews/aggressive_dedup.json.gz'
+meta_path ='/mnt/brain4/datasets/amazon_reviews/metadata.json'
 
-with open('/home/llajan/fairseq/scripts/stats/product_categories.pkl', 'rb') as f:
-  product_categories = pickle.load(f)
+ct = 0
+product_categories = {}
+with open(meta_path, 'r') as f:
+  line = f.readline()
+  while line:
+    ct += 1
+    if ct % 10000 == 0:
+      print(ct)
+    line = line.strip()
+    d = eval(line)
+    if 'categories' in d and len(d['categories']) == 1:
+      category = d['categories'][0]
+      if category:
+        category = '.'.join(category)
+        if category not in product_categories:
+          product_categories[category] = set()
+        product_categories[category].add(d['asin'])
+    line = f.readline()
 
 product_to_category = {}
 for category in product_categories:
@@ -38,5 +54,5 @@ for l in g:
         category_to_reviews[category_str][key] = []
       category_to_reviews[category_str][key].append(value)
 
-with open('category_product_reviews.pkl', 'wb') as f:
+with open('/tmp/category_product_reviews.pkl', 'wb') as f:
   pickle.dump(category_to_reviews, f)
