@@ -113,12 +113,18 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                             help='Maximum number of tasks.')
         parser.add_argument('--train_only_z', action='store_true',
                             help='Train only z.')
+        parser.add_argument('--freeze_embeddings', action='store_true',
+                            help='Freeze word embeddings.')
         parser.add_argument('--task_emb_cond_type', default='encoder', type=str,
                             help='Task emb conditioning type.')
         parser.add_argument('--encoder_embed_dim', default=512, type=int,
                             help='Task emb size.')
         parser.add_argument('--share_decoder_input_output_embed', action='store_true',
                             help='Share decoder input and output layers.')
+        parser.add_argument('--adapter_size', default=None, type=int,
+                            help='Size of adapter layers.')
+        parser.add_argument('--split_task_emb', action='store_true',
+                            help='Split task embedding layer-wise.')
         # fmt: on
 
     @classmethod
@@ -153,7 +159,7 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
                 args.adaptive_softmax_cutoff, args.adaptive_input_cutoff)
             assert args.decoder_input_dim == args.decoder_output_dim
 
-        if args.training_mode == 'task_agnostic' or args.task_emb_cond_type == 'decoder':
+        if args.training_mode == 'task_agnostic' or args.task_emb_cond_type == 'decoder' or args.adapter_size is not None:
             no_encoder_attn = True
         else:
             no_encoder_attn = False
@@ -171,6 +177,17 @@ class TransformerLanguageModelMeta(FairseqLanguageModel):
             for param in decoder.parameters():
                 param.requires_grad = False
             decoder.task_embedding_init.requires_grad = True
+
+        # if getattr(args, 'freeze_embeddings', None) and args.freeze_embeddings:
+        #     print("Word embeddings are not tuned!")
+        #     embed_tokens.weight.requires_grad = False
+
+        # for name, param in decoder.named_parameters():
+        #     # if ('layers.11' in name) or ('layers.10' in name) or ('layers.9' in name) or ('layers.8' in name) or ('layers.7' in name) or ('layers.6' in name) or ('layers.5' in name) or ('layers.4' in name) or ('layers.3' in name):
+        #     if ('layers' in name):
+        #         param.requires_grad = True
+        #     else:
+        #         param.requires_grad = False
 
         return TransformerLanguageModelMeta(decoder)
 

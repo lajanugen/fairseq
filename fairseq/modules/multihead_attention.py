@@ -1,9 +1,7 @@
-# Copyright (c) 2017-present, Facebook, Inc.
-# All rights reserved.
+# Copyright (c) Facebook, Inc. and its affiliates.
 #
-# This source code is licensed under the license found in the LICENSE file in
-# the root directory of this source tree. An additional grant of patent rights
-# can be found in the PATENTS file in the same directory.
+# This source code is licensed under the MIT license found in the
+# LICENSE file in the root directory of this source tree.
 
 import torch
 from torch import nn
@@ -15,11 +13,12 @@ from fairseq import utils
 
 class MultiheadAttention(nn.Module):
     """Multi-headed attention.
-
     See "Attention Is All You Need" for more details.
     """
 
-    def __init__(self, embed_dim, num_heads, kdim=None, vdim=None, dropout=0., bias=True, add_bias_kv=False, add_zero_attn=False):
+    def __init__(self, embed_dim, num_heads, kdim=None, vdim=None, dropout=0., bias=True,
+                 add_bias_kv=False, add_zero_attn=False, self_attention=False,
+                 encoder_decoder_attention=False):
         super().__init__()
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
@@ -31,6 +30,12 @@ class MultiheadAttention(nn.Module):
         self.head_dim = embed_dim // num_heads
         assert self.head_dim * num_heads == self.embed_dim, "embed_dim must be divisible by num_heads"
         self.scaling = self.head_dim ** -0.5
+
+        self.self_attention = self_attention
+        self.encoder_decoder_attention = encoder_decoder_attention
+
+        assert not self.self_attention or self.qkv_same_dim, 'Self-attention requires query, key and ' \
+                                                             'value to be of the same size'
 
         if self.qkv_same_dim:
             self.in_proj_weight = Parameter(torch.Tensor(3 * embed_dim, embed_dim))
@@ -58,6 +63,12 @@ class MultiheadAttention(nn.Module):
 
         self.onnx_trace = False
 
+        self.enable_torch_version = False
+        if hasattr(F, "multi_head_attention_forward"):
+            self.enable_torch_version = True
+        else:
+            self.enable_torch_version = False
+
     def prepare_for_onnx_export_(self):
         self.onnx_trace = True
 
@@ -79,22 +90,39 @@ class MultiheadAttention(nn.Module):
             nn.init.xavier_normal_(self.bias_v)
 
     def forward(self, query, key, value, key_padding_mask=None, incremental_state=None,
-                need_weights=True, static_kv=False, attn_mask=None, task_emb=None):
+                need_weights=True, static_kv=False, attn_mask=None):
         """Input shape: Time x Batch x Channel
-
-        Self-attention can be implemented by passing in the same arguments for
-        query, key and value. Timesteps can be masked by supplying a T x T mask in the
+        Timesteps can be masked by supplying a T x T mask in the
         `attn_mask` argument. Padding elements can be excluded from
         the key by passing a binary ByteTensor (`key_padding_mask`) with shape:
         batch x src_len, where padding elements are indicated by 1s.
         """
-
-        qkv_same = query.data_ptr() == key.data_ptr() == value.data_ptr()
-        kv_same = key.data_ptr() == value.data_ptr()
-
         tgt_len, bsz, embed_dim = query.size()
         assert embed_dim == self.embed_dim
         assert list(query.size()) == [tgt_len, bsz, embed_dim]
+
+        if self.enable_torch_version and not self.onnx_trace and incremental_state is None and not static_kv:
+            if self.qkv_same_dim:
+                return F.multi_head_attention_forward(query, key, value,
+                                                      self.embed_dim, self.num_heads,
+                                                      self.in_proj_weight,
+                                                      self.in_proj_bias, self.bias_k, self.bias_v,
+                                                      self.add_zero_attn, self.dropout,
+                                                      self.out_proj.weight, self.out_proj.bias,
+                                                      self.training, key_padding_mask, need_weights,
+                                                      attn_mask)
+            else:
+                return F.multi_head_attention_forward(query, key, value,
+                                                      self.embed_dim, self.num_heads,
+                                                      torch.empty([0]),
+                                                      self.in_proj_bias, self.bias_k, self.bias_v,
+                                                      self.add_zero_attn, self.dropout,
+                                                      self.out_proj.weight, self.out_proj.bias,
+                                                      self.training, key_padding_mask, need_weights,
+                                                      attn_mask, use_separate_proj_weight=True,
+                                                      q_proj_weight=self.q_proj_weight,
+                                                      k_proj_weight=self.k_proj_weight,
+                                                      v_proj_weight=self.v_proj_weight)
 
         if incremental_state is not None:
             saved_state = self._get_input_buffer(incremental_state)
@@ -102,15 +130,15 @@ class MultiheadAttention(nn.Module):
                 # previous time steps are cached - no need to recompute
                 # key and value if they are static
                 if static_kv:
-                    assert kv_same and not qkv_same
+                    assert self.encoder_decoder_attention and not self.self_attention
                     key = value = None
         else:
             saved_state = None
 
-        if qkv_same:
+        if self.self_attention:
             # self-attention
             q, k, v = self.in_proj_qkv(query)
-        elif kv_same:
+        elif self.encoder_decoder_attention:
             # encoder-decoder attention
             q = self.in_proj_q(query)
             if key is None:
@@ -136,17 +164,7 @@ class MultiheadAttention(nn.Module):
                 key_padding_mask = torch.cat(
                     [key_padding_mask, key_padding_mask.new_zeros(key_padding_mask.size(0), 1)], dim=1)
 
-        if task_emb is not None:
-            # q = q.contiguous().view(tgt_len, bsz, self.num_heads, self.head_dim)
-            # q = q * task_emb.unsqueeze(0).unsqueeze(2)  # 1 x bsz x 1 x head_dim
-            # q = q.view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-
-            q = q * task_emb.unsqueeze(0)
-            #q = q + task_emb.unsqueeze(0)
-            q = q.contiguous().view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-        else:
-            q = q.contiguous().view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-
+        q = q.contiguous().view(tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if k is not None:
             k = k.contiguous().view(-1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if v is not None:
@@ -193,6 +211,8 @@ class MultiheadAttention(nn.Module):
                     [key_padding_mask, torch.zeros(key_padding_mask.size(0), 1).type_as(key_padding_mask)], dim=1)
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
+        attn_weights = self.apply_sparse_mask(attn_weights, tgt_len, src_len, bsz)
+
         assert list(attn_weights.size()) == [bsz * self.num_heads, tgt_len, src_len]
 
         if attn_mask is not None:
@@ -303,3 +323,6 @@ class MultiheadAttention(nn.Module):
             'attn_state',
             buffer,
         )
+
+    def apply_sparse_mask(self, attn_weights, tgt_len, src_len, bsz):
+        return attn_weights

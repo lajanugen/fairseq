@@ -3,6 +3,7 @@
 # This source code is licensed under the MIT license found in the
 # LICENSE file in the root directory of this source tree.
 
+from pdb import set_trace as bp
 import torch.nn as nn
 import torch.nn.functional as F
 from fairseq import utils
@@ -180,8 +181,31 @@ class TransformerDecoderLayer(nn.Module):
 
         self.onnx_trace = False
 
+        self.adapter_size = args.adapter_size
+
     def prepare_for_onnx_export_(self):
         self.onnx_trace = True
+
+    def adapter(self, x, adapter_weights):
+
+        in_size = self.embed_dim
+        out_size = self.adapter_size
+
+        down_weights, down_bias, up_weights, up_bias = adapter_weights.split(
+            [in_size * out_size, out_size, in_size * out_size, in_size], -1)
+
+        down_weights = down_weights.view(-1, in_size, out_size)
+        up_weights = up_weights.view(-1, out_size, in_size)
+
+        down_proj = x.transpose(0, 1).bmm(down_weights) + down_bias.transpose(0, 1)
+        # B x T x d
+
+        down_proj = self.activation_fn(down_proj)
+
+        up_proj = down_proj.bmm(up_weights) + up_bias.transpose(0, 1)
+        # B x T x D
+
+        return up_proj.transpose(0, 1) + x
 
     def forward(
         self,
@@ -221,6 +245,10 @@ class TransformerDecoderLayer(nn.Module):
             attn_mask=self_attn_mask,
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
+        if self.adapter_size is not None:
+            split_size = encoder_out.shape[-1] // 2
+            adapter_weights_1 = encoder_out.split(split_size, -1)[0]
+            x = self.adapter(x, adapter_weights_1)
         x = residual + x
         x = self.maybe_layer_norm(self.self_attn_layer_norm, x, after=True)
 
@@ -252,6 +280,10 @@ class TransformerDecoderLayer(nn.Module):
         x = F.dropout(x, p=self.activation_dropout, training=self.training)
         x = self.fc2(x)
         x = F.dropout(x, p=self.dropout, training=self.training)
+        if self.adapter_size is not None:
+            split_size = encoder_out.shape[-1] // 2
+            adapter_weights_2 = encoder_out.split(split_size, -1)[1]
+            x = self.adapter(x, adapter_weights_2)
         x = residual + x
         x = self.maybe_layer_norm(self.final_layer_norm, x, after=True)
         if self.onnx_trace and incremental_state is not None:

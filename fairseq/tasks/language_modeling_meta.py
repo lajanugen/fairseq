@@ -177,6 +177,7 @@ class LanguageModelingMetaTask(FairseqTask):
         self.mdl = args.mdl
         self.task_emb_layer = args.task_emb_layer
         self.freeze_bottom_layers = args.freeze_bottom_layers
+        self.data = {'train': None, 'valid': None}
 
         if targets is None:
             targets = ["future"]
@@ -257,15 +258,19 @@ class LanguageModelingMetaTask(FairseqTask):
         else:
             split_path = os.path.join(data_path, 'train.' + split)
 
-        dataset = data_utils.load_indexed_dataset(
-            split_path, self.dictionary, self.args.dataset_impl, combine=combine
-        )
+        if self.data[split] is None:
+            dataset = data_utils.load_indexed_dataset(
+                split_path, self.dictionary, self.args.dataset_impl, combine=combine
+            )
+            self.data[split] = dataset
+        else:
+            dataset = self.data[split]
 
         if self.train_unseen_task:
           assert self.args.sample_break_mode != 'complete_doc'
           self.dataset_size[split] = len(dataset)
-          if ('train' in self.dataset_size) and ('valid' in self.dataset_size):
-            assert self.dataset_size['train'] == self.dataset_size['valid']
+          # if ('train' in self.dataset_size) and ('valid' in self.dataset_size):
+          #   assert self.dataset_size['train'] == self.dataset_size['valid']
           dataset = SubsetDataset(dataset, self.eval_task_id)
           print("Data size %s: %d" % (split, len(dataset)))
 
@@ -294,6 +299,10 @@ class LanguageModelingMetaTask(FairseqTask):
             targets=self.targets,
             add_bos_token=self.args.add_bos_token,
         )
+
+    # def load_dataset(self, split, epoch=0, combine=False, **kwargs):
+    #     if split not in self.datasets:
+    #         self.load_dataset_base(split, epoch=0, combine=False, **kwargs)
 
     def build_dataset_for_inference(self, src_tokens, src_lengths):
         return TransformEosDataset(
@@ -426,6 +435,8 @@ class LanguageModelingMetaTask(FairseqTask):
                 z_optimizer.zero_grad()
 
                 loss, sample_size, logging_output = criterion(model, sample)
+                if i == 0:
+                    initial_loss = loss.item()
 
                 loss.backward()
                 z_optimizer.step()
@@ -443,6 +454,7 @@ class LanguageModelingMetaTask(FairseqTask):
         loss, sample_size, logging_output = criterion(model, sample)
         if 'meta' in model.decoder.training_mode:
             logging_output['num_grad_updates'] = num_grad_updates
+            logging_output['initial_loss'] = initial_loss
         if ignore_grad:
             loss *= 0
 
@@ -479,12 +491,15 @@ class LanguageModelingMetaTask(FairseqTask):
                     # train_loss = (loss.view(bs, -1) * train_mask).sum()
                     # train_loss.backward()
                     loss, sample_size, _ = criterion(model, sample)
+                    if i == 0:
+                        initial_loss = loss.item()
                     loss.backward()
                     z_optimizer.step()
 
         loss, sample_size, logging_output = criterion(model, sample)
         if 'meta' in model.decoder.training_mode:
             logging_output['num_grad_updates'] = self.num_grad_updates
+            logging_output['initial_loss'] = initial_loss
 
         # if self.train_unseen_task:
         #     loss, sample_size, logging_output = criterion(model, sample)
@@ -499,7 +514,7 @@ class LanguageModelingMetaTask(FairseqTask):
 
     def aggregate_logging_outputs(self, logging_outputs, criterion):
         agg_logging_outputs = criterion.__class__.aggregate_logging_outputs(logging_outputs)
-        for other_metrics in ['num_grad_updates']:
+        for other_metrics in ['num_grad_updates', 'initial_loss']:
             agg_logging_outputs[other_metrics] = sum(
                 log[other_metrics] for log in logging_outputs if other_metrics in log)
         return agg_logging_outputs 

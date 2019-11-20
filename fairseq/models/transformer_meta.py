@@ -60,6 +60,9 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         self.encoder_embed_dim = args.encoder_embed_dim
         self.freeze_bottom_layers = args.freeze_bottom_layers
         self.task_emb_layer = args.task_emb_layer
+        self.split_task_emb = getattr(args, 'split_task_emb', None)
+        if self.split_task_emb:
+            self.encoder_embed_dim *= args.decoder_layers
 
         padding_idx = embed_tokens.padding_idx
         self.max_target_positions = args.max_target_positions
@@ -109,22 +112,22 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
         self.LMinit = args.LMinit
 
         if args.training_mode == 'multitask':
-            self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
-            self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            self.task_embeddings = nn.Embedding(args.max_tasks, self.encoder_embed_dim)
+            self.task_embeddings_eval = nn.Embedding(args.max_tasks, self.encoder_embed_dim)
 
         elif 'meta' in args.training_mode:
-            self.task_embeddings = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
-            self.task_embeddings_eval = nn.Embedding(args.max_tasks, args.encoder_embed_dim)
+            self.task_embeddings = nn.Embedding(args.max_tasks, self.encoder_embed_dim)
+            self.task_embeddings_eval = nn.Embedding(args.max_tasks, self.encoder_embed_dim)
             self.z_optimizer = optim.Adam(self.task_embeddings.parameters(), lr=args.z_lr)
             self.z_optimizer_eval = optim.Adam(self.task_embeddings_eval.parameters(), lr=args.z_lr)
 
         elif args.training_mode == 'single_task':
-            self.task_embedding_init = nn.Parameter(torch.randn(args.encoder_embed_dim))
+            self.task_embedding_init = nn.Parameter(torch.zeros(self.encoder_embed_dim))
 
         self.task_emb_proj = None
         if args.training_mode != 'task_agnostic' and args.task_emb_cond_type == 'decoder':
-            if args.encoder_embed_dim != args.decoder_embed_dim: 
-                self.task_emb_proj = nn.Linear(args.encoder_embed_dim, args.decoder_embed_dim)
+            if self.encoder_embed_dim != args.decoder_embed_dim: 
+                self.task_emb_proj = nn.Linear(self.encoder_embed_dim, args.decoder_embed_dim)
 
     def forward(self, prev_output_tokens, encoder_out=None, incremental_state=None, task_id=None, meta_mode=None, mode='train', cached_output=None, **unused):
         """
@@ -255,13 +258,25 @@ class TransformerDecoderMeta(FairseqIncrementalDecoder):
 
         # decoder layers
         for layer_idx, layer in enumerate(self.layers):
-            x, attn = layer(
-                x,
-                encoder_out['encoder_out'] if encoder_out is not None else None,
-                encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
-                incremental_state,
-                self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
-            )
+            if self.split_task_emb:
+                assert encoder_out is not None
+                num_layers = len(self.layers)
+                split_shp = encoder_out['encoder_out'].shape[-1] // num_layers
+                x, attn = layer(
+                    x,
+                    encoder_out['encoder_out'].split(split_shp, -1)[layer_idx],
+                    encoder_out['encoder_padding_mask'],
+                    incremental_state,
+                    self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
+                )
+            else:
+                x, attn = layer(
+                    x,
+                    encoder_out['encoder_out'] if encoder_out is not None else None,
+                    encoder_out['encoder_padding_mask'] if encoder_out is not None else None,
+                    incremental_state,
+                    self_attn_mask=self.buffered_future_mask(x) if incremental_state is None else None,
+                )
 
             if layer_idx == self.freeze_bottom_layers:
                 x = x.data
