@@ -140,14 +140,14 @@ if [ $CLUSTER == "0" ]; then
   if [ $EVAL == "0" ]; then
     RUN="python fairseq_cli/train.py"
 	else
-    RUN="python train_multiple_tasks.py"
+    RUN="python train_multiple_tasks_v2.py"
 	fi
 else
   RUN="srun --job-name=$EXP_NAME --output=$CKPT_DIR/$EXP_NAME/train.log --error=$CKPT_DIR/$EXP_NAME/train.stderr --open-mode=append --unbuffered "
   if [ $EVAL == "0" ]; then
     RUN="$RUN python fairseq_cli/train.py"
 	else
-    RUN="$RUN python train_multiple_tasks.py"
+    RUN="$RUN python train_multiple_tasks_v2.py"
     # RUN="python train_multiple_tasks.py"
 	fi
   #RUN="srun --nodes=1 --gres=gpu:1 --partition=learnfair --time=30 python fairseq_cli/train.py"
@@ -168,10 +168,11 @@ fi
 #fi
 ARGS="$ARGS --task synthetic_lm_task_maml --arch review_tf"
 
+#	--load_from_pickle \
 ARGS="$ARGS \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--load_tasks_file /checkpoint/annl/transfer_learn_lm_fix/tasks.txt \
+	--load_tasks_file $TASKS_FILE \
 	--max-tokens 4096 \
 	--optimizer adam \
 	--encoder_type transformer \
@@ -185,7 +186,7 @@ ARGS="$ARGS \
 	--clip-norm 5 \
 	--reset-dataloader \
 	--z_lr $ZLR \
-	--encoder-embed-dim 8 \
+	--encoder-embed-dim 128 \
 	/tmp/data "
 
 mkdir -p $CKPT_DIR/$EXP_NAME
@@ -195,11 +196,11 @@ echo $ARGS | tee $CKPT_DIR/$EXP_NAME/params.txt
 #$RUN $ARGS | tee $CKPT_DIR/$EXP_NAME/run_log.txt
 
 if [ $CLUSTER == "0" ]; then
-	$RUN $ARGS
+	$RUN $ARGS 
 else
 
 #sbatch --job-name=$EXP_NAME --nodes=1 --gres=gpu:volta:1 -C volta32gb --partition=learnfair \
-sbatch --job-name=$EXP_NAME --nodes=1 --gres=gpu:volta:1 -C volta32gb --partition=priority --comment="ICLR September 25" \
+sbatch --job-name=$EXP_NAME --nodes=1 --gres=gpu:volta:1 -C volta32gb --partition=learnfair \
 	--output=$CKPT_DIR/$EXP_NAME/train.log --error=$CKPT_DIR/$EXP_NAME/train.stderr --open-mode=append --time=4320 \
 	--no-requeue --ntasks-per-node=1 --cpus-per-task=8 --mem=32000 \
 	--wrap="$RUN $ARGS"

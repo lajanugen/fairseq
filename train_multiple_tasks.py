@@ -30,7 +30,7 @@ def cross_validate(stats):
 
     best_num_iters = None
 
-    num_iter_grid = [25, 50, 75, 100]
+    num_iter_grid = [25, 50, 75, 100, 125, 150, 175, 200]
     num_iter_perf = {}
     for num_iter in num_iter_grid:
         num_iter_perf[num_iter] = []
@@ -362,7 +362,7 @@ def master_main():
 
     best_val = float('inf')
 
-    for ckpt in range(10, 101, 10):
+    for ckpt in range(10, 201, 10):
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
 
         all_stats = []

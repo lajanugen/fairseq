@@ -296,8 +296,6 @@ class FairseqReviewLM(BaseFairseqModel):
 
         if self.training_mode == 'maml':
             self.inner_opt = optim.Adam(self.model.parameters(), lr=self.z_lr)
-        elif self.training_mode == 'maml_z':
-            self.inner_opt = optim.Adam(self.task_embedding_init, lr=self.z_lr)
 
 
     def forward(
@@ -311,6 +309,7 @@ class FairseqReviewLM(BaseFairseqModel):
         optimizer=None,
         mode='train'
     ):
+
 
         bs = src_tokens.shape[0]
         task_id = src_tokens[:, 0]

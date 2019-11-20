@@ -368,7 +368,7 @@ def master_main():
 
         best_val = float('inf')
 
-        for ckpt in range(10, 101, 10):
+        for ckpt in range(10, 201, 10):
             args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
             print(args.restore_file)
             print(os.path.exists(args.restore_file))

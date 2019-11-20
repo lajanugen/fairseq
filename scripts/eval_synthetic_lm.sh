@@ -12,7 +12,7 @@ EXP_NAME="$LOAD-$MODE-$MDL-$FINETUNE-$TEST_SAMPLES"
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
-ARGS="-e $EXP_NAME --vocab $VOCAB_SIZE --seqlen $SEQ_LEN -m $MODE --mdl $MDL -f -l $LAYERS --max-epoch 100 --zsize $ZSIZE"
+ARGS="-e $EXP_NAME --vocab $VOCAB_SIZE --seqlen $SEQ_LEN -m $MODE --mdl $MDL -f -l $LAYERS --max-epoch 200 --zsize $ZSIZE"
 
 if [ $FINETUNE == "no" ]; then
     ARGS="$ARGS --no-training"

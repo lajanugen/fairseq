@@ -164,13 +164,20 @@ if __name__ == "__main__":
     parser.add_argument("--num_blobs", type=int, default=8)
     parser.add_argument("--start_id", type=int, default=0)
     parser.add_argument("--end_id", type=int, default=-1)
+    parser.add_argument("--start_point", type=int, default=-1)
     parser.add_argument("--num_test_tasks", type=int, default=100)
     parser.add_argument("--examples_per_task", type=int, default=1500)
     parser.add_argument("--gen_len", type=int, default=12)
     parser.add_argument("--save_path", default='/checkpoint/aszlam/laja/gridworld_tasks.pkl')
     args = parser.parse_args()
 
-    ntasks = args.sidelength**4
+    assert(args.start_point < args.sidelength**2)
+    if args.start_point >= 0:
+        ntasks = args.sidelength**2
+        S = args.start_point
+    else:
+        ntasks = args.sidelength**4
+
     if args.just_tlist:
         tlist = torch.randperm(ntasks).tolist()
         f = open(args.tlist_path, 'wb')
@@ -191,9 +198,14 @@ if __name__ == "__main__":
     else:
         end_id = args.end_id
         
+    assert(end_id <= ntasks)
+    
     for i in tqdm(range(args.start_id, end_id)):
         taskid = tlist[i]
-        S, T = deraster(taskid, args.sidelength**2)
+        if args.start_point >= 0:
+            T = taskid
+        else:
+            S, T = deraster(taskid, args.sidelength**2)
         start_h, start_w = deraster(S, args.sidelength)
         end_h, end_w = deraster(T, args.sidelength)
         generator.register_task(start_h, start_w, end_h, end_w)

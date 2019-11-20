@@ -169,11 +169,10 @@ fi
 ARGS="$ARGS --task synthetic_lm_task --arch review_tf"
 
 ARGS="$ARGS \
-	/tmp/data/ \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--load_tasks_file /tmp/gen_tasks.txt \
-	--max-tokens 2048 \
+	--load_tasks_file /checkpoint/annl/transfer_learn_lm_seq_trans/tasks.txt \
+	--max-tokens 4096 \
 	--optimizer adam \
 	--encoder_type transformer \
 	--num_test $UNSEEN_NUM_TEST \
@@ -185,7 +184,8 @@ ARGS="$ARGS \
 	--task_emb_cond_type cls_token \
 	--clip-norm 5 \
 	--reset-dataloader \
-	--z_lr $ZLR"
+	--z_lr $ZLR \
+	/tmp/data "
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
