@@ -1,5 +1,6 @@
 # Save dir
 CKPT_DIR=/home/llajan/b6/fsl
+DATA_DIR=/home/llajan/b6/amazon_reviews_v4/ 
 EXP_NAME=test
 TRAINING_MODE=multitask
 
@@ -28,7 +29,7 @@ EVAL_TASK_ID=0
 FASTEVAL=no
 
 # Task settings
-MAX_TASKS=1000
+MAX_TASKS=100
 MAX_SEQ_LEN=66
 
 while [[ $# -gt 0 ]]
@@ -92,6 +93,8 @@ ARGS="--task language_modeling_meta --arch transformer_lm_meta_gpt"
 if [ $RUN_MODE == "eval" ]; then
     # RUN="python train_multiple_tasks_v2.py"
     RUN="python train_multiple_tasks_v3.py"
+    # RUN="python train_single_task.py"
+    # RUN="python fairseq_cli/train.py"
     EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
 elif [ $RUN_MODE == "sample" ]; then
     RUN="python fairseq_cli/train.py"
@@ -125,14 +128,18 @@ if [ ! -z $INIT_MDL ]; then
     ARGS="$ARGS --restore-file $CKPT_DIR/$INIT_MDL --reset-optimizer"
 fi
 
-if [ $LOGLOSS == "2" ]; then ARGS="$ARGS --log_losses $CKPT_DIR/$EXP_NAME/losses.txt"; fi
+if [ $LOGLOSS == "1" ]; then ARGS="$ARGS --log_losses $CKPT_DIR/$EXP_NAME/losses.txt"; fi
 
-#	--criterion adaptive_loss \
-#	--ddp-backend=no_c10d \
-#  --dataset-impl lazy \
-#  /home/llajan/fairseq/scripts/task_v3_bpe/ \
+if [ $TASK_EMB_COND_TYPE == "encoder" ]; then
+	  ARGS="$ARGS --task_emb_cond_type encoder"
+elif [ $TASK_EMB_COND_TYPE == "adapters" ]; then
+	  ARGS="$ARGS --task_emb_cond_type encoder --split_task_emb --adapter_size 2"
+elif [ $TASK_EMB_COND_TYPE == "decoder" ]; then
+	  ARGS="$ARGS --task_emb_cond_type decoder"
+fi
+
 ARGS="$ARGS \
-    /home/llajan/b6/amazon_reviews_v3/ \
+    $DATA_DIR \
     --criterion cross_entropy \
     --dataset-impl raw \
     --save-dir $CKPT_DIR/$EXP_NAME \
@@ -142,9 +149,15 @@ ARGS="$ARGS \
     --clip-norm 5 \
     --reset-dataloader \
     --num_grad_updates $NUM_GRAD_UPDATES \
-    --task_emb_cond_type $TASK_EMB_COND_TYPE \
-    --save-interval-updates 10000 \
+    --share_decoder_input_output_embed \
+ 		--disable-validation \
     --z_lr $ZLR"
+# 		--dropout 0.0 \
+# 		--attention-dropout 0.0 \
+# 		--activation-dropout 0.0 \
+# 		--freeze_embeddings \
+#     --save-interval-updates 10000 \
+#	    --ddp-backend=no_c10d \
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
