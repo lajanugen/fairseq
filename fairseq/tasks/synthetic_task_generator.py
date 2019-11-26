@@ -33,6 +33,14 @@ class TaskGenerator():
         for k in [5, 6, 7]:
             transforms.append(('mod', k))
 
+#        for k in range(1, self.vocab_size + 1):
+#            muls.append(('mul', k))
+#            transforms.extend(muls)
+#            adds.append(('add', k))
+#            transforms.extend(adds)
+#            transforms.append(('div', k))
+#            transforms.append(('mod', k))
+
         subseq = []
 
         for k, n in itertools.product(range(self.vocab_size // 2), range(self.vocab_size)):
@@ -73,6 +81,17 @@ class TaskGenerator():
         self.subseq = subseq
         self.reorder = reorder
 
+        self.transforms_taskid = {}
+        self.subseq_taskid = {}
+        self.reorder_taskid = {}
+
+        for i in range(len(transforms)):
+            self.transforms_taskid[' '.join(map(str, transforms[i]))] = i
+        for i in range(len(subseq)):
+            self.subseq_taskid[' '.join(map(str, subseq[i]))] = i
+        for i in range(len(reorder)):
+            self.reorder_taskid[' '.join(map(str, reorder[i]))] = i
+        
 
     def generate_tasks(self):
 
@@ -109,12 +128,48 @@ class TaskGenerator():
         return list(tasks_explored)
 
 
+    def generate_all_tasks(self):
+        rng = np.random.RandomState(seed=1234)
+
+        tasks_iter = 0
+        tasks_explored = []
+        for transform, subseq, reorder in itertools.product(self.transforms, self.subseq, self.reorder):
+            print(tasks_iter)
+            tasks_iter += 1
+
+            task_description = self.task_description(transform, subseq, reorder)
+            
+            data = self.generate_data_single_task(task_description, 100, rng)  # test that the task makes sense
+            if len(data) == 0:
+                print('bad task: %s' % task_description)
+                continue
+
+            tasks_explored.append(task_description)
+
+        if self.logdir is not None:
+            with open(self.logdir, 'w') as f:
+                f.write('\n'.join(tasks_explored))
+
+        return tasks_explored
+
+
     def task_description(self, transform, subseq, reorder):
         transform = map(str, transform)
         subseq = map(str, subseq)
         reorder = map(str, reorder)
 
         return ' -> '.join([' '.join(transform), ' '.join(subseq), ' '.join(reorder)])
+
+
+    def get_task_ids(self, task_description):
+        subtasks = task_description.split(' -> ')
+
+        assert subtasks[0] in self.transforms_taskid
+        assert subtasks[1] in self.subseq_taskid
+        assert subtasks[2] in self.reorder_taskid
+
+        return (self.transforms_taskid[subtasks[0]], self.subseq_taskid[subtasks[1]], self.reorder_taskid[subtasks[2]])
+
 
     def load_tasks(self, tasks_file):
         with open(tasks_file, 'r') as f:
