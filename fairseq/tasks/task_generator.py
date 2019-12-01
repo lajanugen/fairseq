@@ -216,6 +216,66 @@ class TaskGenerator():
 
         return all_data
 
+    def generate_data_same_input(self, tasks, num_train, num_test, uniform_classes=False):
+
+        all_data = []
+
+        count = 0
+        
+        num_examples = num_train + 2 * num_test
+
+        per_class_data = num_examples // self.num_classes
+
+        for task in tasks:
+            rng = np.random.RandomState(seed=1234)
+            count += 1
+            transform, subseq, labeling = task.split(' -> ')
+            transform = transform.split()
+            transform[1] = int(transform[1])
+
+            subseq = subseq.split()
+            if len(subseq) == 3:
+                subseq = [' '.join(subseq[:2]), int(subseq[-1])]
+            else:
+                subseq[1] = int(subseq[1])
+
+            data_strings = []
+            intermediate = []
+            data = {}
+            labels_enough_data = set()
+            num_iter = 0
+            labels = []
+            X = []
+
+            while True:
+
+                x = list(rng.randint(self.vocab_size, size=(self.seqlen,)))
+
+                x_tf = self.fn_map[transform[0]](x, transform[1])
+
+                flag = True
+                if 'not' in subseq[0]:
+                    flag = False
+                x_subseq = self.fn_map[subseq[0].split()[-1]](x_tf, subseq[1], flag)
+
+                if not x_subseq:  # Empty sequence
+                    x_label = None
+                else:
+                    x_label = int(self.fn_map[labeling](x_subseq))
+
+                labels.append(x_label)
+                x_str = ' '.join(map(str, x))
+                data_strings.append(x_str)
+                intermediate.append(x_subseq)
+
+                if len(data_strings) == num_examples:
+                    # print(len(data_strings))
+                    break
+
+            all_data.append((data_strings, labels, intermediate))
+
+        return all_data
+
     def task_description(self, transform, subseq, labeling):
         transform = map(str, transform)
         subseq = map(str, subseq)

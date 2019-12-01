@@ -67,7 +67,9 @@ def main(args, examples, state=None, init_distributed=False):
 
     # Setup task, e.g., translation, language modeling, etc.
     task = tasks.setup_task(args, load_data=False)
-    task.examples = examples
+    task.examples = examples['examples']
+    task.input_vocab = examples['input_vocab']
+    task.test_task_descriptions = examples['test_task_descriptions']
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
     for valid_sub_split in args.valid_subset.split(','):
@@ -355,19 +357,23 @@ def master_main():
 
     # Setup task, e.g., translation, language modeling, etc.
     task_gen = tasks.setup_task(args)
-    examples = task_gen.examples
+    examples = {
+        'examples': task_gen.examples, 
+        'input_vocab': task_gen.input_vocab, 
+        'test_task_descriptions': task_gen.test_task_descriptions,
+    }
 
     no_training = args.no_training
     if no_training:
         args.max_epoch = 1
 
-    for ckpt in range(10, 101, 10):
+    for ckpt in range(1, 11):
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
         assert os.path.exists(args.restore_file)
         state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
         all_stats = []
-        for task in range(16):
+        for task in range(20):
             args.eval_task_id = task
 
             train_stats, valid_stats = cli_main(args, examples, state)
@@ -386,7 +392,7 @@ def master_main():
     state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
     train_accs, test_accs = [], []
-    for task in range(16, 64):
+    for task in range(20, 100):
         print(best_ckpt, task)
         args.eval_task_id = task
 

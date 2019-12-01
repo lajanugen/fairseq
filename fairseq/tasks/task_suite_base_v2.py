@@ -5,8 +5,9 @@ import torch
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
-from fairseq.tasks.task_generator import TaskGenerator
+from fairseq.tasks.task_generator_v2 import TaskGenerator
 
+# from pdb import set_trace as bp
 
 class Dictionary_toy(Dictionary):
     def __init__(self, no_special_tokens=False):
@@ -31,8 +32,8 @@ class Dictionary_toy(Dictionary):
         return line_encode
 
 
-@register_task('task_suite')
-class TaskSuiteBase(FairseqTask):
+@register_task('task_suite_v2')
+class TaskSuiteBase_v2(FairseqTask):
 
     @staticmethod
     def add_args(parser):
@@ -64,12 +65,12 @@ class TaskSuiteBase(FairseqTask):
                             help='Location to write task descriptions')
         parser.add_argument('--eval_task_id', default=0, type=int,
                             help='Identifier of meta eval task')
-        parser.add_argument('--load_tasks_file', default='/tmp/tasks.txt', type=str,
+        parser.add_argument('--load_tasks', default='/tmp', type=str,
                             help='Tasks file.')
-        parser.add_argument('--all_task_examples', action='store_true',
-                            help='Feed all task training examples as input.')
         parser.add_argument('--no_training', action='store_true',
                             help='No fine-tuning.')
+        parser.add_argument('--compositional', action='store_true',
+                            help='Compositional task defn.')
 
     @classmethod
     def setup_task(cls, args, load_data=True, **kwargs):
@@ -77,11 +78,10 @@ class TaskSuiteBase(FairseqTask):
         # loading Dictionaries, initializing shared Embedding layers, etc.
         # In this case we'll just load the Dictionaries.
 
-        return TaskSuiteBase(args, load_data)
+        return TaskSuiteBase_v2(args, load_data)
 
     def __init__(self, args, load_data=True):
         super().__init__(args)
-        # self.task = simple_count_task
         self.num_train = args.num_train
         self.num_test = args.num_test
         self.vocab_size = args.vocab_size
@@ -92,8 +92,8 @@ class TaskSuiteBase(FairseqTask):
         self.sample_num_tasks = args.sample_num_tasks
         self.batch_version = args.batch_version
         self.eval_task_id = args.eval_task_id
-        self.all_task_examples = args.all_task_examples
         self.no_training = args.no_training
+        self.compositional = args.compositional
         self.num_classes = 4
 
         self.max_tasks = args.max_tasks
@@ -126,12 +126,20 @@ class TaskSuiteBase(FairseqTask):
                 self.vocab_size,
                 self.num_classes,
                 args.task_descriptions_dir)
-            task_descriptions = task_generator.load_tasks(args.load_tasks_file)
+            train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
+
+            self.train_task_descriptions = train_task_descriptions 
+
+            if self.compositional:
+                for task in self.train_task_descriptions:
+                    for component in task.split('->'):
+                        self.input_vocab.add_symbol(component)
     
-            assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+            # assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
     
             if self.train_unseen_task:
-                test_task_descriptions = task_descriptions[-self.num_test_tasks:]
+                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/test.txt')
+                # test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
     
                 test_tasks = task_generator.generate_data(
                     test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
@@ -143,8 +151,11 @@ class TaskSuiteBase(FairseqTask):
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
     
             else:
-                train_task_descriptions = task_descriptions[:self.num_train_tasks]
-                val_task_descriptions = task_descriptions[self.num_train_tasks + 1:self.num_train_tasks + self.num_test_tasks]
+                # test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
+                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
+
+                val_task_descriptions = test_task_descriptions[-self.num_test_tasks:]
+                self.val_task_descriptions = val_task_descriptions 
     
                 print('Generating data...')
                 train_tasks = task_generator.generate_data(
@@ -158,25 +169,31 @@ class TaskSuiteBase(FairseqTask):
     
                 self.examples = {'train': train_examples, 'valid': val_examples}
 
-    def construct_data(self, task_id, examples):
+            self.test_task_descriptions = test_task_descriptions 
+
+    def construct_data(self, task_id, examples, task_description):
 
         sentences, lengths, labels = [], [], []
+
+        task_description = task_description.split('->')
 
         for instance in examples:
 
             sentence, label = instance
-            sentence = [task_id, self.cls_encode] + self.input_vocab.encode(sentence)
+            sentence = [task_id, self.cls_encode] + self.input_vocab.encode(sentence) 
+            if self.compositional:
+                sentence = sentence + self.input_vocab.encode(task_description)
             sentences.append(torch.LongTensor(sentence))
             lengths.append(self.max_seq_len)
             labels.append(torch.LongTensor([label]))
 
         return sentences, labels, lengths
 
-    def construct_data_train(self, task_id, examples):
-        return self.construct_data(task_id, examples)
+    def construct_data_train(self, task_id, examples, task_description):
+        return self.construct_data(task_id, examples, task_description)
 
-    def construct_data_test(self, task_id, examples, train_examples, split):
-        return self.construct_data(task_id, examples)
+    def construct_data_test(self, task_id, examples, train_examples, split, task_description):
+        return self.construct_data(task_id, examples, task_description)
 
     def load_dataset(self, split, **kwargs):
         """Load a given dataset split (e.g., train, valid, test)."""
@@ -192,8 +209,9 @@ class TaskSuiteBase(FairseqTask):
             # Note: Even though train and test task id's overlap, they index into different tables
             assert task_id < self.num_test_tasks
 
+            task_descriptions = self.test_task_descriptions
             sentences, labels, lengths = self.construct_data_test(
-                task_id, examples[split][task_id], examples['train'][task_id], split)
+                task_id, examples[split][task_id], examples['train'][task_id], split, task_descriptions[task_id])
 
             tgt_sizes = [label.shape[0] for label in labels]
 
@@ -213,10 +231,15 @@ class TaskSuiteBase(FairseqTask):
             split_examples = examples[split]
             num_tasks = len(split_examples)
 
+            if split == 'valid':
+                task_descriptions = self.val_task_descriptions
+            else:
+                task_descriptions = self.train_task_descriptions
+
             for i in range(num_tasks):
                 task_id = i
                 sentences, labels, lengths = self.construct_data_train(
-                    task_id, split_examples[i])
+                    task_id, split_examples[i], task_descriptions[i])
 
                 dataset_map[i] = LanguagePairDataset(
                     src=sentences,
@@ -329,8 +352,10 @@ class TaskSuiteBase(FairseqTask):
                 sample['net_input']['num_tasks'] = self.sample_num_tasks
             # Eval mode: Use 25% of the data to validation. The 75% is used for training by meta-learned
             # models and ignored by non-meta learning models.
-            with torch.set_grad_enabled(True):
-                loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+            # with torch.set_grad_enabled(True):
+            #     loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+            with torch.no_grad():
+                loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
         else:
             with torch.no_grad():
                 loss, sample_size, logging_output = self._get_loss(sample, model, criterion)

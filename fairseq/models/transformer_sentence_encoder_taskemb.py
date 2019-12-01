@@ -173,7 +173,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         last_state_only: bool = False,
         positions: Optional[torch.Tensor] = None,
         self_attn_mask: torch.Tensor = None,
-        cls_mask: torch.Tensor = None,
+        task_ids_mask: torch.Tensor = None,
         input_embeddings: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
@@ -195,7 +195,16 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
             if len(list(task_embedding.shape)) == 1:
                 task_embedding = task_embedding.unsqueeze(0)
 
-            if self.task_emb_cond_type == 'token':
+            if task_ids_mask is not None:
+                task_len = task_ids_mask.shape[1]
+                compositional_embeddings = x[:, -task_len:]
+                compositional_embeddings = compositional_embeddings * (1 - task_ids_mask) + task_embedding * task_ids_mask
+                if self.task_emb_cond_type == 'cls_token':
+                    compositional_embeddings = compositional_embeddings.sum(dim=1, keepdim=True)
+                    x = torch.cat((compositional_embeddings, x[:, 1:-task_len]), axis=1)
+                else:
+                    x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
+            elif self.task_emb_cond_type == 'token':
                 if task_embedding.shape[0] == 1:
                     bs = x.shape[0]
                     task_embedding = task_embedding.expand(bs, -1)
@@ -213,10 +222,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                 if self.task_emb_size != self.embedding_dim:
                     task_embedding = self.task_emb_project(task_embedding)
                 task_embedding = task_embedding.unsqueeze(1)
-                if cls_mask is None:
+                if cls_mask is not None:
                     x = torch.cat((task_embedding, x[:, 1:]), dim=1)
-            elif self.task_emb_cond_type == 'cls_token':
-                task_embedding = task_embedding.unsqueeze(0)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)

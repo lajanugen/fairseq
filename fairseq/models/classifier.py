@@ -79,7 +79,7 @@ class Classifier(nn.Module):
             set_grads_flag(self.sentence_encoder, False)
             set_grads_flag(self.classifier, False)
 
-    def forward(self, src_tokens, task_embedding=None, attn_mask=None, segment_labels=None):
+    def forward(self, src_tokens, task_embedding=None, attn_mask=None, segment_labels=None, task_ids_mask=None):
 
        segment_labels = torch.zeros_like(src_tokens)
 
@@ -87,6 +87,7 @@ class Classifier(nn.Module):
            src_tokens,
            segment_labels=segment_labels,
            task_embedding=task_embedding,
+           task_ids_mask=task_ids_mask,
            self_attn_mask=attn_mask)
 
        logits = self.classifier(sentence_rep)
