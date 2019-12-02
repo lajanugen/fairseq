@@ -174,6 +174,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         positions: Optional[torch.Tensor] = None,
         self_attn_mask: torch.Tensor = None,
         task_ids_mask: torch.Tensor = None,
+        cls_mask: torch.Tensor = None,
         input_embeddings: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
 
