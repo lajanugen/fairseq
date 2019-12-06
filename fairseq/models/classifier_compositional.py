@@ -178,6 +178,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.num_test_tasks = task.num_test_tasks
         self.max_seq_len = task.max_seq_len
         self.train_unseen_task = task.train_unseen_task
+        # self.task_embedding_inds = task.task_embedding_inds
         
         self.args = args
         self.training_mode = args.training_mode
@@ -187,12 +188,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
 
-        if self.training_mode == 'multitask':
-            task_embeddings = nn.Embedding(self.num_train_tasks, self.task_emb_size)
-            task_embeddings_eval = nn.Embedding(self.num_test_tasks, self.task_emb_size)
-            self.task_embeddings = {'train': task_embeddings, 'eval': task_embeddings_eval}
-
-        elif 'meta' in self.training_mode:
+        if 'meta' in self.training_mode:
             # Train
             task_embeddings = nn.Embedding(self.num_train_tasks, self.task_emb_size * args.task_description_len).cuda()
             z_optimizer = optim.Adam(task_embeddings.parameters(), lr=self.z_lr)
@@ -206,8 +202,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size * args.task_description_len))
 
-        else:
-            assert self.training_mode == 'task_agnostic'
 
         self.model = Classifier(args, task)
 
@@ -274,7 +268,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         else:
             task_embedding = None
 
-        if 'meta' in self.training_mode and mode == 'train':
+        if 'meta' in self.training_mode:
+
+            # Average init
+            # learned_embeddings = self.model.sentence_encoder.embed_tokens.weight.data
+            # mean_embeddings = [learned_embeddings[self.task_embedding_inds[i][0]: self.task_embedding_inds[i][1] + 1].mean(0) for i in range(3)]
+            # mean_embedding = torch.cat(mean_embeddings, 0)
+            # self.task_embeddings[mode].weight.data.copy_(mean_embedding)
 
             self.task_embeddings[mode].weight.data.zero_()
             z_optimizer = self.z_optimizer[mode]
@@ -326,12 +326,12 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                         losses_str = '%s\n' % ' '.join(map(str, losses))
                         f.write(losses_str)
 
-        if 'meta' in self.training_mode and mode == 'train':
+        if 'meta' in self.training_mode:
             task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
             learned_embs = self.model.sentence_encoder.embed_tokens(compositional_task_ids[:, remove_ind])
             opt_embs = task_embedding[:, remove_ind]
-            embedding_loss = F.mse_loss(learned_embs, opt_embs)
-            outputs['embedding_loss'] = embedding_loss
+            # embedding_loss = F.mse_loss(learned_embs, opt_embs)
+            # outputs['embedding_loss'] = embedding_loss
 
             logits = self.model(src_tokens, task_embedding.data, task_ids_mask=task_ids_mask)
         elif self.training_mode == 'single_task':

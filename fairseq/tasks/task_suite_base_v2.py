@@ -7,6 +7,7 @@ from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
 from fairseq.tasks.task_generator_v2 import TaskGenerator
 
+import numpy as np
 # from pdb import set_trace as bp
 
 class Dictionary_toy(Dictionary):
@@ -134,12 +135,21 @@ class TaskSuiteBase_v2(FairseqTask):
                 for task in self.train_task_descriptions:
                     for component in task.split('->'):
                         self.input_vocab.add_symbol(component)
-    
-            # assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+                # primitives = [[], [], []]
+                # min_max_inds = []
+                # for task in self.train_task_descriptions:
+                #     components = task.split('->')
+                #     for i in range(3):
+                #         primitives[i].append(components[i])
+                # for i in range(3):
+                #     indices = []
+                #     for x in primitives[i]:
+                #         indices.append(self.input_vocab.add_symbol(x))
+                #     min_max_inds.append((np.min(indices), np.max(indices)))
+                # self.task_embedding_inds = min_max_inds
     
             if self.train_unseen_task:
                 test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/test.txt')
-                # test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
     
                 test_tasks = task_generator.generate_data(
                     test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
@@ -151,8 +161,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
     
             else:
-                # test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
-                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
+                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
 
                 val_task_descriptions = test_task_descriptions[-self.num_test_tasks:]
                 self.val_task_descriptions = val_task_descriptions 
@@ -352,10 +361,8 @@ class TaskSuiteBase_v2(FairseqTask):
                 sample['net_input']['num_tasks'] = self.sample_num_tasks
             # Eval mode: Use 25% of the data to validation. The 75% is used for training by meta-learned
             # models and ignored by non-meta learning models.
-            # with torch.set_grad_enabled(True):
-            #     loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
-            with torch.no_grad():
-                loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
+            with torch.set_grad_enabled(True):
+                loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
         else:
             with torch.no_grad():
                 loss, sample_size, logging_output = self._get_loss(sample, model, criterion)

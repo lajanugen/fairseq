@@ -199,6 +199,10 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
             if task_ids_mask is not None:
                 task_len = task_ids_mask.shape[1]
                 compositional_embeddings = x[:, -task_len:]
+                task_emb_size = task_embedding.shape[-1]
+                if task_emb_size != self.embedding_dim:
+                    task_embedding = self.task_emb_project(task_embedding.view(-1, task_emb_size))
+                    task_embedding = task_embedding.view(-1, task_len, self.embedding_dim)
                 compositional_embeddings = compositional_embeddings * (1 - task_ids_mask) + task_embedding * task_ids_mask
                 if self.task_emb_cond_type == 'cls_token':
                     compositional_embeddings = compositional_embeddings.sum(dim=1, keepdim=True)
@@ -223,7 +227,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                 if self.task_emb_size != self.embedding_dim:
                     task_embedding = self.task_emb_project(task_embedding)
                 task_embedding = task_embedding.unsqueeze(1)
-                if cls_mask is not None:
+                if cls_mask is None:
                     x = torch.cat((task_embedding, x[:, 1:]), dim=1)
 
         if segment_labels is None:
