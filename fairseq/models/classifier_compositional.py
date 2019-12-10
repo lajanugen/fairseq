@@ -255,7 +255,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             # task_ids_mask = torch.zeros((1, task_len, 1), device=task_id.device)
             # task_ids_mask[0, remove_ind, 0] = 1
-            task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
+            # task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
+            task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
+            task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
 
             task_embeddings = self.task_embeddings[mode]
 
@@ -327,11 +329,14 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                         f.write(losses_str)
 
         if 'meta' in self.training_mode:
-            task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
-            learned_embs = self.model.sentence_encoder.embed_tokens(compositional_task_ids[:, remove_ind])
-            opt_embs = task_embedding[:, remove_ind]
-            # embedding_loss = F.mse_loss(learned_embs, opt_embs)
-            # outputs['embedding_loss'] = embedding_loss
+            # task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
+            # learned_embs = self.model.sentence_encoder.embed_tokens(compositional_task_ids[:, remove_ind])
+            # opt_embs = task_embedding[:, remove_ind]
+            # # embedding_loss = F.mse_loss(learned_embs, opt_embs)
+            # # outputs['embedding_loss'] = embedding_loss
+
+            task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
+            task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
 
             logits = self.model(src_tokens, task_embedding.data, task_ids_mask=task_ids_mask)
         elif self.training_mode == 'single_task':
