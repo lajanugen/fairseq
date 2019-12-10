@@ -41,6 +41,8 @@ class SyntheticLMTask(ReviewTask):
                             help='load tasks and examples from a pickle file')
         parser.add_argument('--vocab_size', default=10, type=int,
                             help='Vocabulary size')
+        parser.add_argument('--num_train_tasks', default=5, type=int,
+                            help='Number of train tasks')
         parser.add_argument('--num_test_tasks', default=5, type=int,
                             help='Number of test tasks')
         parser.add_argument('--num_train', default=10000, type=int,
@@ -68,6 +70,7 @@ class SyntheticLMTask(ReviewTask):
         self.num_test = args.num_test
         self.max_seq_len = args.max_seq_len
         self.vocab_size = args.vocab_size
+        self.num_train_tasks = args.num_train_tasks
         self.num_test_tasks = args.num_test_tasks
         self.sample_num_tasks = args.sample_num_tasks
         self.load_from_pickle = args.load_from_pickle
@@ -76,8 +79,9 @@ class SyntheticLMTask(ReviewTask):
         self.val_task_ids = []
         self.test_task_ids = []
 
-        self.num_operations = ()
-        
+        self.num_operations = 0
+
+        # TODO: update load_from_pickle case
         if self.load_from_pickle:
             full_data = []
             filelist = args.load_train_tasks_file.split(',')
@@ -135,25 +139,29 @@ class SyntheticLMTask(ReviewTask):
                 self.max_seq_len,
                 self.vocab_size)
 
-            train_task_descriptions_full = task_generator.load_tasks(args.load_train_tasks_file)
-
-            assert len(train_task_descriptions_full) > self.num_test_tasks
-
-            train_task_descriptions = train_task_descriptions_full[:-self.num_test_tasks]
-            val_task_descriptions = train_task_descriptions_full[-self.num_test_tasks:]
-            test_task_descriptions = task_generator.load_tasks(args.load_test_tasks_file) 
-
-            self.train_task_ids = [task_generator.get_task_ids(t) for t in train_task_descriptions]
-            self.val_task_ids = [task_generator.get_task_ids(t) for t in val_task_descriptions]
-            self.test_task_ids = [task_generator.get_task_ids(t) for t in test_task_descriptions]
-
             print('Generating data...')
             
             if load_data:
                 if self.train_unseen_task:
+                    test_task_descriptions = task_generator.load_tasks(args.load_test_tasks_file) 
+                    self.test_task_ids = [list(task_generator.get_task_ids(t)) for t in test_task_descriptions]
+
                     test_tasks = task_generator.generate_data(
                         test_task_descriptions, self.num_train, self.num_test)
                 else:
+                    train_task_descriptions_full = task_generator.load_tasks(args.load_train_tasks_file)
+
+                    assert len(train_task_descriptions_full) > self.num_train_tasks
+                    train_task_descriptions_full = train_task_descriptions_full[:self.num_train_tasks]
+                    
+                    assert len(train_task_descriptions_full) > self.num_test_tasks
+
+                    train_task_descriptions = train_task_descriptions_full[:-self.num_test_tasks]
+                    val_task_descriptions = train_task_descriptions_full[-self.num_test_tasks:]
+            
+                    self.train_task_ids = [list(task_generator.get_task_ids(t)) for t in train_task_descriptions]
+                    self.val_task_ids = [list(task_generator.get_task_ids(t)) for t in val_task_descriptions]
+
                     train_tasks = task_generator.generate_data(
                         train_task_descriptions, self.num_train, self.num_test)
                     val_tasks = task_generator.generate_data(
@@ -161,8 +169,7 @@ class SyntheticLMTask(ReviewTask):
             
             print('Done Generating data.')
 
-            self.num_operations = (len(task_generator.transforms), len(task_generator.subseq), len(task_generator.reorder))
-
+            self.num_operations = len(task_generator.transforms) + len(task_generator.subseq) + len(task_generator.reorder)
 
         if self.train_unseen_task:
             if load_data:
@@ -217,7 +224,7 @@ class SyntheticLMTask(ReviewTask):
                 output_sequence = output_sequence[:self.max_seq_len]
 
             # prepend task_id
-            input_sequence = list(task_ids) + input_sequence
+            input_sequence = task_ids + input_sequence
             # output_sequence = [task_id] + output_sequence
            
             input_sentences.append(torch.LongTensor(input_sequence))
@@ -230,9 +237,9 @@ class SyntheticLMTask(ReviewTask):
 
     def load_dataset(self, split, epoch=1, combine=False, **kwargs):
         if self.train_unseen_task:
-            assert self.eval_task_id < self.num_test_tasks
+            assert self.eval_task_id < len(self.examples[split])
 
-            input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(self.test_task_ids[self.eval_task_id], self.examples[split][self.eval_task_id])
+            input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data([self.eval_task_id] + self.test_task_ids[self.eval_task_id], self.examples[split][self.eval_task_id])
 
             self.datasets[split] = LanguagePairDataset(
                 src=input_sentences,
@@ -256,7 +263,7 @@ class SyntheticLMTask(ReviewTask):
                 task_ids = self.val_task_ids
             
             for task_id in range(num_tasks):
-                input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(task_ids[task_id], split_examples[task_id])
+                input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data([task_id] + task_ids[task_id], split_examples[task_id])
 
                 dataset_map[task_id] = LanguagePairDataset(
                     src=input_sentences,

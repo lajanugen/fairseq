@@ -66,7 +66,7 @@ def main(args, examples, state=None, init_distributed=False):
     # Print args
     print(args)
     
-    task = tasks.setup_task(args, load_data=False)
+    task = tasks.setup_task(args)
     task.examples = examples
 
     # Load valid dataset (we load training data below, based on the latest checkpoint)
@@ -351,6 +351,9 @@ def master_main():
     parser = options.get_training_parser()
     parser.add_argument("--fast-eval", action="store_true", help="Fast eval mode.")
     parser.add_argument("--eval-num-iter", default=10, type=int, help="Number of eval training iterations.")
+    parser.add_argument("--eval-num-iter-start", default=10, type=int, help="Start number of eval training iterations.")
+    parser.add_argument("--eval-num-iter-end", default=101, type=int, help="End number of eval training iterations.")
+    parser.add_argument("--eval-num-iter-step", default=10, type=int, help="Steps between start and end Numbers of eval training iterations.")
     args = options.parse_args_and_arch(parser)
 
     # Setup task, e.g., translation, language modeling, etc.
@@ -368,7 +371,7 @@ def master_main():
 
         best_val = float('inf')
 
-        for ckpt in range(10, 201, 10):
+        for ckpt in range(args.eval_num_iter_start, args.eval_num_iter_end, args.eval_num_iter_step):
             args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
             print(args.restore_file)
             print(os.path.exists(args.restore_file))
@@ -395,7 +398,7 @@ def master_main():
     state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
     train_accs, test_accs = [], []
-    for task in range(16, 64):
+    for task in range(16, 116):
         args.eval_task_id = task
 
         train_stats, valid_stats = cli_main(args, examples, state)

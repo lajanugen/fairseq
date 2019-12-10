@@ -22,24 +22,24 @@ class TaskGenerator():
         transforms = []
         muls = []
         adds = []
-        for k in [3, 5, 7]:
+        for k in [2, 3, 5, 7, 9, 10, 11]:
             muls.append(('mul', k))
-            transforms.extend(muls)
-        for k in [1, 3, 5]:
+        transforms.extend(muls)
+        for k in range(self.vocab_size):
             adds.append(('add', k))
-            transforms.extend(adds)
+        transforms.extend(adds)
         for k in [2, 3]:
             transforms.append(('div', k))
-        for k in [5, 6, 7]:
+        for k in [5, 6, 7, 8, 9, 10, 11]:
             transforms.append(('mod', k))
 
 #        for k in range(1, self.vocab_size + 1):
 #            muls.append(('mul', k))
-#            transforms.extend(muls)
 #            adds.append(('add', k))
-#            transforms.extend(adds)
 #            transforms.append(('div', k))
 #            transforms.append(('mod', k))
+#        transforms.extend(muls)
+#        transforms.extend(adds)
 
         subseq = []
 
@@ -88,9 +88,9 @@ class TaskGenerator():
         for i in range(len(transforms)):
             self.transforms_taskid[' '.join(map(str, transforms[i]))] = i
         for i in range(len(subseq)):
-            self.subseq_taskid[' '.join(map(str, subseq[i]))] = i
+            self.subseq_taskid[' '.join(map(str, subseq[i]))] = i + len(transforms)
         for i in range(len(reorder)):
-            self.reorder_taskid[' '.join(map(str, reorder[i]))] = i
+            self.reorder_taskid[' '.join(map(str, reorder[i]))] = i + len(transforms) + len(subseq)
         
 
     def generate_tasks(self):
@@ -202,8 +202,7 @@ class TaskGenerator():
         return all_data
 
 
-    def generate_data_single_task(self, task, num_examples, rng, allow_fail=True):
-
+    def parse_task(self, task):
         transform, subseq, reorder = task.split(' -> ')
         transform = transform.split()
         transform[1] = int(transform[1])
@@ -223,6 +222,26 @@ class TaskGenerator():
             for i in range(1, len(reorder)):
                 reorder[i] = int(reorder[i])
 
+        return transform, subseq, reorder
+
+
+    def generate_output(self, transform, subseq, reorder, in_seq):
+        x_tf = self.fn_map[transform[0]](in_seq, transform[1])
+        if len(x_tf) != len(in_seq):
+            return []
+
+        x_subseq = self.fn_map[subseq[0]](x_tf, subseq[1:])
+        if len(x_subseq) != len(in_seq):
+            return []
+
+        x_final = self.fn_map[reorder[0]](x_subseq, reorder)
+
+        return x_final
+
+
+    def generate_data_single_task(self, task, num_examples, rng, allow_fail=True):
+        transform, subseq, reorder = self.parse_task(task)
+
         input_strings = set()
         data = []
         fail_count = 0
@@ -237,14 +256,8 @@ class TaskGenerator():
                 continue
             input_strings.add(x_str)
 
-            x_tf = self.fn_map[transform[0]](x, transform[1])
+            x_final = self.generate_output(transform, subseq, reorder, x)
 
-            x_subseq = self.fn_map[subseq[0]](x_tf, subseq[1:])
-            if len(x_subseq) != len(x):
-                fail_count += 1
-                continue
-
-            x_final = self.fn_map[reorder[0]](x_subseq, reorder)
             if len(x_final) != len(x):
                 fail_count += 1
                 continue

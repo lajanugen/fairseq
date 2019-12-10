@@ -267,30 +267,29 @@ class FairseqReviewLM(BaseFairseqModel):
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
+        self.num_train_tasks = task.num_train_tasks
+        self.num_task_stages = 3
         self.num_task_embeddings = task.num_operations
-        self.num_task_stages = len(task.num_operations)
         self.max_seq_len = task.max_seq_len
         self.sample_num_tasks = task.sample_num_tasks
         self.unseen_task_stage = args.unseen_task_stage
 
-        assert self.num_task_stages == 3
-
         if self.training_mode == 'multitask':
-            self.task_embeddings = [nn.Embedding(
-                n, self.task_emb_size) for n in self.num_task_embeddings]
+            self.task_embeddings = nn.Embedding(
+                self.num_task_embeddings, self.task_emb_size)
 
         elif 'meta' in self.training_mode:
-            self.task_embeddings = [nn.Embedding(
-                n, self.task_emb_size) for n in self.num_task_embeddings]
-            self.task_embeddings_infer = [nn.Embedding(
-                n, self.task_emb_size) for n in self.num_task_embeddings]
+            self.task_embeddings = nn.Embedding(
+                self.num_task_embeddings, self.task_emb_size)
+            self.task_embeddings_infer = nn.Embedding(
+                self.num_train_tasks, self.task_emb_size)
 
             self.z_optimizer = optim.Adam(
                 self.task_embeddings_infer.parameters(), lr=self.z_lr)
 
         elif self.training_mode == 'single_task':
-            self.task_embeddings = [nn.Embedding(
-                n, self.task_emb_size) for n in self.num_task_embeddings]
+            self.task_embeddings = nn.Embedding(
+                self.num_task_embeddings, self.task_emb_size)
 
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
 
@@ -318,10 +317,12 @@ class FairseqReviewLM(BaseFairseqModel):
 
 
         bs = src_tokens.shape[0]
-        task_ids = [src_tokens[:, i] for i in range(self.num_task_stages)]
+        global_task_ids = src_tokens[:, 0]
+        local_task_ids = src_tokens[:, 1:self.num_task_stages+1]
+#        task_ids = src_tokens[:, 0:self.num_task_stages+1]
 
         targets = targets[:, 1:]
-        src_tokens = src_tokens[:, self.num_task_stages:-1]
+        src_tokens = src_tokens[:, self.num_task_stages+1:-1]
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
@@ -341,21 +342,21 @@ class FairseqReviewLM(BaseFairseqModel):
             attn_mask = subsequent_mask(targets.shape[1] + 1)
 
         # Randomly initialized task embedding
-        if self.training_mode == 'multitask':
-            task_embedding = torch.cat([self.task_embeddings[i](task_ids[i]) for i in range(self.num_task_stages)], 1)
+        if self.training_mode == 'multitask' or (self.training_mode == 'single_task' and self.unseen_task_stage == -1):
+            task_embedding = self.task_embeddings(local_task_ids).view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
         elif self.training_mode == 'single_task': 
-            task_embedding = torch.cat([self.task_embedding_init if n == self.unseen_task_stage else self.task_embeddings[n](task_ids[n]) for n in range(self.num_task_stages)], 1)
+            task_embedding = torch.cat([self.task_embedding_init.repeat(local_task_ids.shape[0], 1) if n == self.unseen_task_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
         else:
             task_embedding = None
 
         if 'meta' in self.training_mode:
+            # randomly pick a stage to learn from scratch
+            infer_stage = random.randint(0, self.num_task_stages)
+
             self.task_embeddings_infer.weight.data.zero_()
 
             step_size = self.z_lr
             set_learning_rate(self.z_optimizer, step_size)
-
-            # randomly pick a stage to learn from scratch
-            infer_stage = random.randint(0, self.num_task_stages)
 
             losses = []
             for i in range(self.num_grad_updates):
@@ -363,7 +364,8 @@ class FairseqReviewLM(BaseFairseqModel):
                 num_grad_updates = i
 
                 self.z_optimizer.zero_grad()
-                task_embedding = torch.cat([self.task_embeddings_infer[n](task_ids[n]) if n == infer_stage else self.task_embeddings[n](task_ids[n]) for n in range(self.num_task_stages)], 1)
+                task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids) if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+#                task_embedding = task_embedding.view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
 
                 logits = self.model(
                     src_tokens,
@@ -432,7 +434,8 @@ class FairseqReviewLM(BaseFairseqModel):
 
 
         if self.training_mode == 'meta':
-            task_embedding = torch.cat([self.task_embeddings_infer[n](task_ids[n]).detach() if n == infer_stage else self.task_embeddings[n](task_ids[n]) for n in range(self.num_task_stages)], 1)
+            task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids).data if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+            #task_embedding = task_embedding.view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
 
         logits = self.model(
             src_tokens,
@@ -450,13 +453,16 @@ class FairseqReviewLM(BaseFairseqModel):
         return outputs
 
     def upgrade_state_dict_named(self, state_dict, name):
-        if self.training_mode != 'task_agnostic' and self.training_mode != 'maml':
+        for k in list(state_dict.keys()):
+            print(k)
+            if self.training_mode == 'single_task' and 'task_embeddings_infer' in k:
+                print('Ignoring: %s' % k)
+                del state_dict[k]
+
+
+        if self.training_mode == 'single_task':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
-
-        if self.training_mode == 'single_task' and 'task_embeddings_infer' in state_dict:
-            print('Ignoring: task_embeddings_infer')
-            del state_dict['task_embeddings_infer']
 
         return state_dict
 
