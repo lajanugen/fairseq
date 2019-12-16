@@ -26,6 +26,7 @@ def dijkstra(edges, f, t):
 
     return -1, None
 
+
 def raster(h,w,sl):
     return h*sl + w
 
@@ -67,8 +68,12 @@ class GW():
         self.blob_size = blob_size
         self.gen_len = gen_len
 
+    def hash_waypoints(self, waypoints):
+        return raster(self.waypoints[-1][0], self.waypoints[-1][1], self.sidelength) + self.sidelength**2
+
     def register_task(self, waypoints):
         self.waypoints = waypoints
+        self.waypoints_idx = [raster(w[0], w[1], self.sidelength) + self.sidelength**2  for w in waypoints]
         self.waypoints_dict = {}
         for i in range(len(self.waypoints)):
             self.waypoints_dict[self.waypoints[i]] = i
@@ -132,9 +137,9 @@ class GW():
                                  self.sidelength))
 
         if self.path is None:
-            return (source, [raster(self.waypoints[0][0], self.waypoints[0][1], self.sidelength)]*self.gen_len)
+            return (source, [self.waypoints_idx[0]]*self.gen_len)
         else:
-            target = [raster(self.waypoints[-1][0], self.waypoints[-1][1], self.sidelength) + self.sidelength**2]*self.gen_len
+            target = [self.waypoints_idx[-1]]*self.gen_len
             for i in range(min(len(self.path), self.gen_len)):
                 target[i] = self.path[i] + self.sidelength**2
             return (source, target)
@@ -222,7 +227,7 @@ if __name__ == "__main__":
         for j in range(args.examples_per_task):
             x = generator.generate()
             task_out.append(x)
-        out.append((task_out, waypoints, new_task_position))
+        out.append((task_out, generator.waypoints_idx, new_task_position))
         
 
 
