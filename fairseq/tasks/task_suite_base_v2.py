@@ -128,6 +128,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.num_classes,
                 args.task_descriptions_dir)
             train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
+            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_500.txt')
 
             self.train_task_descriptions = train_task_descriptions 
 
@@ -340,7 +341,6 @@ class TaskSuiteBase_v2(FairseqTask):
         model.train()
         optimizer.zero_grad()
         if self.batch_version:
-            sample['net_input']['num_tasks'] = self.sample_num_tasks
             loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
         else:
             loss, sample_size, logging_output = self._get_loss_tasks(sample, model, criterion)
@@ -357,8 +357,6 @@ class TaskSuiteBase_v2(FairseqTask):
         # We need gradient computation
         sample['net_input']['mode'] = 'eval'
         if 'meta' in model.training_mode:
-            if self.batch_version:
-                sample['net_input']['num_tasks'] = self.sample_num_tasks
             # Eval mode: Use 25% of the data to validation. The 75% is used for training by meta-learned
             # models and ignored by non-meta learning models.
             with torch.set_grad_enabled(True):

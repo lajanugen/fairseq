@@ -218,27 +218,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
     ):
         bs = src_tokens.shape[0]
 
-        if num_tasks:
-            num_ex_per_task = bs // num_tasks
-
-        if split_data:
-            if self.train_unseen_task:
-                split_ratio = 0.5
-            else:
-                split_ratio = 0.7
-
-            if num_tasks:
-                N_train = int(split_ratio * num_ex_per_task)
-                train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
-                train_mask = train_mask.view(-1)
-            else:
-                N_train = int(split_ratio * bs)
-                train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
-            test_mask = 1 - train_mask
-        else:
-            train_mask = torch.ones(bs).cuda()
-            test_mask = train_mask
-
         segment_labels = torch.zeros_like(src_tokens)
 
         task_id = src_tokens[:, 0]
@@ -250,12 +229,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         src_tokens = src_tokens[:, 1:]
 
         if 'meta' in self.training_mode:
-            inds = list(range(task_len))
-            remove_ind = choice(inds)
-
-            # task_ids_mask = torch.zeros((1, task_len, 1), device=task_id.device)
-            # task_ids_mask[0, remove_ind, 0] = 1
-            # task_ids_mask = torch.rand(1, task_len, 1).gt(0.5).float().cuda()
             task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
             task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
 
@@ -293,7 +266,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 task_embedding = task_embeddings(task_id).view(-1, task_len, self.task_emb_size)
 
                 logits = self.model(src_tokens, task_embedding, task_ids_mask=task_ids_mask)
-                loss = compute_loss(logits, targets, normalize_loss=True, mask=train_mask)
+                loss = compute_loss(logits, targets, normalize_loss=True)
                 losses.append(loss.item())
 
                 loss.backward()
@@ -303,11 +276,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                     losses.append(loss.item())
 
                 if i == 0:
-                    outputs['pre_accuracy_train'] = compute_accuracy(logits, targets, mask=train_mask)
-                    outputs['pre_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
-                    if split_data:
-                        outputs['pre_accuracy_test'] = compute_accuracy(logits, targets, mask=test_mask)
-                        outputs['pre_loss_test'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
+                    outputs['pre_accuracy_train'] = compute_accuracy(logits, targets)
+                    outputs['pre_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
 
                     prev_loss = loss.item()
                 else:
@@ -344,15 +314,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         else:
             logits = self.model(src_tokens)
 
-        outputs['post_accuracy_train'] = compute_accuracy(logits, targets, mask=train_mask)
-        outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
+        outputs['post_accuracy_train'] = compute_accuracy(logits, targets)
+        outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
         if 'pre_loss_train' in outputs:
             outputs['train_loss_delta'] = outputs['pre_loss_train'] - outputs['post_loss_train']
-        if split_data:
-            outputs['post_accuracy_test'] = compute_accuracy(logits, targets, mask=test_mask)
-            outputs['post_loss_test'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
-            if 'pre_loss_test' in outputs:
-                outputs['test_loss_delta'] = outputs['pre_loss_test'] - outputs['post_loss_test']
 
         return outputs
 

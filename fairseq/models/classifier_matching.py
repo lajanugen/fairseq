@@ -195,6 +195,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         dictionary = task.input_vocab
         self.padding_idx = dictionary.pad()
+        self.unk_index = dictionary.unk_index
         self.vocab_size = dictionary.__len__()
         self.max_tasks = task.max_tasks
         self.encoder_type = args.encoder_type
@@ -253,13 +254,21 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         mode='train'
     ):
         bs = src_tokens.shape[0]
+        num_tasks = self.task.sample_num_tasks
+
+        if self.task.compositional:
+            task_id = src_tokens[:, :3]
+            src_tokens = src_tokens[:, 3:]
+        else:
+            task_id = src_tokens[:, 0]
+            src_tokens = src_tokens[:, 1:]
 
         train_mask, test_mask = None, None
 
         if self.task.train_unseen_task and mode == 'eval':
 
             pair_seq_len = 2 * self.task.max_seq_len + 1
-            src_tokens = src_tokens.view(-1, pair_seq_len)
+            src_tokens = src_tokens.contiguous().view(-1, pair_seq_len)
 
             bs = src_tokens.shape[0]
 
@@ -281,9 +290,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             src_tokens = torch.cat((cls_tensor, src_tokens), -1)
 
         else:
-
-            task_id = src_tokens[:, 0]
-            src_tokens = src_tokens[:, 1:]
 
             if self.task.train_unseen_task:
                 query_tokens = src_tokens
@@ -310,7 +316,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 num_ex_per_task = bs // num_tasks
                 src_tokens = src_tokens.view(num_tasks, bs // num_tasks, -1)
                 targets = targets.view(num_tasks, -1)
-                task_id = task_id.view(num_tasks, -1)
+                if self.task.compositional:
+                    task_id = task_id.view(num_tasks, -1, 3)
+                else:
+                    task_id = task_id.view(num_tasks, -1)
 
                 split_seq_len = self.meta_num_ex
 
@@ -335,7 +344,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 task_id = task_id[:, :num_ex_per_task].contiguous()
 
                 random_queries = torch.LongTensor(d).random_(0, num_ex_per_task)
-
+# 
                 if split_data:
                     split_ratio = 0.5
                     N_train = int(split_ratio * d)
@@ -354,6 +363,12 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
                 src_tokens = src_tokens.view(bs, -1)
                 query_tokens = query_tokens.view(bs, -1)
+                task_id = task_id.view(bs, -1)
+
+                if self.task.compositional:
+                    task_ids_mask_inds = (3 * torch.rand(bs, 1)).long()
+                    task_ids_mask = torch.zeros(bs, 3).scatter(1, task_ids_mask_inds, 1).long().cuda()
+                    task_id = task_id * (1 - task_ids_mask) + self.unk_index * task_ids_mask
 
                 assert src_tokens.shape[-1] == query_tokens.shape[-1]
 
@@ -371,12 +386,17 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                 src_labels = targets.view(-1, split_seq_len)
                 query_labels = query_labels.view(-1, 1)
 
-            task_id = task_id.view(-1)
+            # task_id = task_id.view(-1)
 
             cls_tensor = torch.LongTensor([self.task.cls_encode]).view(1, -1).repeat(bs, 1).cuda()
-            pair_tokens = torch.cat((cls_tensor, query_tokens, src_tokens), -1)
+            src_tokens = torch.cat((cls_tensor, query_tokens, src_tokens), -1)
 
-            src_tokens = pair_tokens
+        if self.task.compositional:
+            if self.task.train_unseen_task:
+                bsize = src_tokens.shape[0]
+                task_id = task_id[[0]].repeat(bsize, 1)
+            assert task_id.shape[0] == src_tokens.shape[0]
+            src_tokens = torch.cat((src_tokens, task_id), 1)
 
         outputs = {}
 

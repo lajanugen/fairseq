@@ -1,4 +1,4 @@
-# from pdb import set_trace as bp
+from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -68,9 +68,9 @@ def subsequent_mask(size):
 
 class SnailClassifier(Classifier):
 
-    def __init__(self, args, task, last_n_outputs):
+    def __init__(self, args, task): #, last_n_outputs):
         super(SnailClassifier, self).__init__(args, task)
-        self.last_n_outputs = last_n_outputs
+        # self.last_n_outputs = last_n_outputs
 
     def forward(
         self,
@@ -78,7 +78,8 @@ class SnailClassifier(Classifier):
         task_embedding=None,
         attn_mask=None,
         segment_labels=None,
-        cls_mask=None
+        cls_mask=None,
+        last_n_outputs=1
     ):
 
         segment_labels = torch.zeros_like(src_tokens)
@@ -94,7 +95,7 @@ class SnailClassifier(Classifier):
 
         rep_size = output.shape[-1]
 
-        cls_outputs = output[:, -self.last_n_outputs:]
+        cls_outputs = output[:, -last_n_outputs:]
         cls_outputs = cls_outputs.contiguous().view(-1, rep_size)
 
         logits = self.classifier(cls_outputs)
@@ -216,6 +217,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         dictionary = task.input_vocab
         self.padding_idx = dictionary.pad()
+        self.unk_index = dictionary.unk_index
         self.vocab_size = dictionary.__len__()
         self.max_tasks = task.max_tasks
         self.encoder_type = args.encoder_type
@@ -245,7 +247,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         else:
             last_n_outputs = self.meta_num_ex
 
-        self.model = SnailClassifier(args, task, last_n_outputs)
+        # self.model = SnailClassifier(args, task, last_n_outputs)
+        self.model = SnailClassifier(args, task)
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -274,16 +277,21 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         src_lengths,
         targets,
         src_all_tokens=None,
-        num_tasks=None,
         split_data=False,
         optimizer=None,
         mode='train'
     ):
         bs = src_tokens.shape[0]
+        num_tasks = self.task.sample_num_tasks
 
-        src_tokens = src_tokens.view(-1, self.max_seq_len + 2)
-        task_id = src_tokens[:, 0]
-        src_tokens = src_tokens[:, 1:].contiguous()
+        if self.task.compositional:
+            src_tokens = src_tokens.view(-1, self.max_seq_len + 4)
+            task_id = src_tokens[:, :3]
+            src_tokens = src_tokens[:, 3:].contiguous()
+        else:
+            src_tokens = src_tokens.view(-1, self.max_seq_len + 2)
+            task_id = src_tokens[:, 0]
+            src_tokens = src_tokens[:, 1:].contiguous()
 
         src_tokens = src_tokens.view(bs, -1)
 
@@ -318,7 +326,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             src_tokens = src_tokens.view(num_tasks, bs // num_tasks, -1)
             targets = targets.view(num_tasks, -1)
-            task_id = task_id.view(num_tasks, -1)
+            if self.task.compositional:
+                task_id = task_id.view(num_tasks, -1, 3)
+            else:
+                task_id = task_id.view(num_tasks, -1)
 
             random_example_order = torch.LongTensor(np.random.permutation(num_ex_per_task))
 
@@ -345,7 +356,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             src_tokens = src_tokens.view(new_bs, -1)
             src_tokens_seq_len = src_tokens.shape[1]
 
-            task_id = task_id.view(new_bs, -1)[:, 0]
+            if self.task.compositional:
+                task_id = task_id.view(new_bs, -1)[:, :3]
+                task_ids_mask_inds = (3 * torch.rand(new_bs, 1)).long()
+                task_ids_mask = torch.zeros(new_bs, 3).scatter(1, task_ids_mask_inds, 1).long().cuda()
+                task_id = task_id * (1 - task_ids_mask) + self.unk_index * task_ids_mask
+            else:
+                task_id = task_id.view(new_bs, -1)[:, 0]
 
             cls_tensor = split_seq_len * [self.task.cls_encode]
             cls_tensor = torch.LongTensor(cls_tensor).view(1, -1).repeat(new_bs, 1).cuda()
@@ -353,6 +370,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             cls_mask = torch.cat((torch.zeros(src_tokens_seq_len), torch.ones(split_seq_len)), 0).cuda()
 
+            # Mask computation
             mask_positions = (torch.arange(split_seq_len) + 1) * single_seq_len - 1
             mask_positions = torch.nn.functional.one_hot(mask_positions, src_tokens_seq_len)
             query_mask = 1 - torch.cumsum(mask_positions, -1)
@@ -363,12 +381,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             query_mask = torch.cat((query_mask.float(), torch.eye(split_seq_len).float()), -1)
 
             instance_mask = subsequent_mask(src_tokens_seq_len)
-
             instance_mask = torch.cat((instance_mask, torch.zeros(src_tokens_seq_len, split_seq_len)), -1)
+
             attn_mask = torch.cat((instance_mask, query_mask), 0).cuda()
-
             attn_mask = 1 - attn_mask
-
             attn_mask.masked_fill_(attn_mask.bool(), float('-inf'))
 
         else:
@@ -392,6 +408,23 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             attn_mask.masked_fill_(attn_mask.bool(), float('-inf'))
 
             cls_mask = torch.cat((torch.zeros(single_seq_len - 1), torch.ones(1)), 0).cuda()
+
+            task_id = task_id[:src_tokens.shape[0]]
+
+            split_seq_len = 1
+
+        if self.task.compositional:
+            assert task_id.shape[0] == src_tokens.shape[0]
+            src_tokens_seq_len = src_tokens.shape[1]
+            src_tokens = torch.cat((task_id, src_tokens), 1)
+            cls_mask = torch.cat((torch.zeros(3).cuda(), cls_mask), 0)
+            
+            append_mask = torch.cat((subsequent_mask(3), torch.zeros(3, src_tokens_seq_len)), 1)
+            append_mask = 1 - append_mask
+            append_mask.masked_fill_(append_mask.bool(), float('-inf'))
+
+            attn_mask = torch.cat((torch.zeros(src_tokens_seq_len, 3).cuda(), attn_mask), 1)
+            attn_mask = torch.cat((append_mask.cuda(), attn_mask), 0)
 
         if self.task.train_unseen_task:
             targets = targets.view(-1)
@@ -463,6 +496,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             src_tokens,
             attn_mask=attn_mask,
             cls_mask=cls_mask,
+            last_n_outputs=split_seq_len,
             task_embedding=task_embedding.data if 'meta' in self.training_mode else task_embedding)
 
         outputs['post_accuracy_train'] = compute_accuracy(logits, targets, mask=train_mask)
