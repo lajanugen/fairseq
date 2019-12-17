@@ -212,7 +212,7 @@ if __name__ == "__main__":
         for j in range(args.examples_per_task):
             x = generator.generate()
             task_out.append(x)
-        out.append((task_out, waypoints, None))
+        out.append((task_out, generator.waypoints_idx, None))
 
     for i in tqdm(range(args.num_test_tasks)):
         waypoints = []
