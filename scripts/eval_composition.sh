@@ -7,7 +7,7 @@ INIT_MDL=$LOAD/checkpoint1.pt
 
 RUN="./scripts/run_composition.sh"
 
-EXP_NAME="$LOAD-$MODE-$MDL-$FINETUNE-$TEST_SAMPLES-$TEST_FILE"
+EXP_NAME="$LOAD-$MODE-$MDL-$FINETUNE-$TEST_SAMPLES-$TEST_FILE$EXP_SUFFIX"
 
 export TEST_FILE="tasks-$TEST_FILE.test.150.txt"
 
@@ -18,7 +18,7 @@ ARGS="-e $EXP_NAME --vocab $VOCAB_SIZE --seqlen $SEQ_LEN -m $MODE --mdl $MDL -f 
 if [ $FINETUNE == "no" ]; then
     ARGS="$ARGS --no-training"
 elif [ $FINETUNE == "z" ]; then
-    ARGS="$ARGS -z --lr 1e-2 --task-emb-init zeros"
+    ARGS="$ARGS -z --lr 1e-2 "
 fi
 
 if [ $DBG_MODE == "no" ]; then

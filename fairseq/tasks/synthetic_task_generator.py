@@ -75,7 +75,7 @@ class TaskGenerator():
                 reorder.append(('swap', i, j))
 
         for i in range(self.seqlen - 1):
-            reorder.append(('shift', i))
+            reorder.append(('shift', i + 1))
 
         self.transforms = transforms
         self.subseq = subseq

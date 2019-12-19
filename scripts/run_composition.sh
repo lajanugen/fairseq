@@ -172,6 +172,9 @@ if [ $LOGLOSS == "1" ]; then
  	ARGS="$ARGS --log_losses $CKPT_DIR/$EXP_NAME/losses.txt"
 fi
 
+#ARGS="$ARGS --lr-scheduler reduce_lr_on_plateau --lr-shrink 0.5 "
+
+
 #if [ $MODEL == "snail" ]; then
 #	ARGS="$ARGS --task task_suite_snail --arch cls_seq --meta_num_ex $META_NUM_EX"
 #elif [ $MODEL == "matching" ]; then
@@ -186,8 +189,8 @@ ARGS="$ARGS --task synthetic_lm_task --arch review_tf"
 ARGS="$ARGS \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--load_train_tasks_file /checkpoint/annl/transfer_learn_composite_v2/task_lists/$TRAIN_FILE \
-	--load_test_tasks_file  /checkpoint/annl/transfer_learn_composite_v2/task_lists/$TEST_FILE \
+	--load_train_tasks_file /checkpoint/annl/transfer_learn_composite_v3/task_lists/$TRAIN_FILE \
+	--load_test_tasks_file  /checkpoint/annl/transfer_learn_composite_v3/task_lists/$TEST_FILE \
 	--unseen_task_stage $UNSEEN_TASK_STAGE \
 	--max-tokens 4096 \
 	--optimizer adam \

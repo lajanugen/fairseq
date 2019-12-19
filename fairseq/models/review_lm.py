@@ -287,7 +287,7 @@ class FairseqReviewLM(BaseFairseqModel):
             self.z_optimizer = optim.Adam(
                 self.task_embeddings_infer.parameters(), lr=self.z_lr)
 
-        elif self.training_mode == 'single_task':
+        elif self.training_mode == 'single_task' or self.training_mode == 'single_task_avg_emb':
             self.task_embeddings = nn.Embedding(
                 self.num_task_embeddings, self.task_emb_size)
 
@@ -296,6 +296,9 @@ class FairseqReviewLM(BaseFairseqModel):
             if not args.tune_model_params:
                 print("Seen task params are not tuned!")
                 set_grads_flag(self.task_embeddings, False)
+
+        elif self.training_mode == 'single_task_full_emb':
+            self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size * self.num_task_stages))
 
         self.model = LMClassifier(args, task)
 
@@ -343,15 +346,24 @@ class FairseqReviewLM(BaseFairseqModel):
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask' or (self.training_mode == 'single_task' and self.unseen_task_stage == -1):
-            task_embedding = self.task_embeddings(local_task_ids).view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
-        elif self.training_mode == 'single_task': 
-            task_embedding = torch.cat([self.task_embedding_init.repeat(local_task_ids.shape[0], 1) if n == self.unseen_task_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+            task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)
+        elif self.training_mode == 'single_task' or self.training_mode == 'single_task_avg_emb': 
+            task_embedding = torch.cat([self.task_embedding_init.repeat(bs, 1) if n == self.unseen_task_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+        elif self.training_mode == 'single_task_full_emb':
+            task_embedding = self.task_embedding_init
         else:
             task_embedding = None
 
         if 'meta' in self.training_mode:
-            # randomly pick a stage to learn from scratch
-            infer_stage = random.randint(0, self.num_task_stages)
+            if self.training_mode == 'meta':
+                # randomly pick a stage to learn from scratch
+                infer_stage = random.randint(0, self.num_task_stages)
+            elif self.training_mode == 'meta_fixstage':
+                infer_stage = self.unseen_task_stage
+            elif self.training_mode == 'meta_randmask':
+                task_ids_mask_inds = (self.num_task_stages * torch.rand(bs, 1)).long()
+                task_ids_mask = torch.zeros(bs, self.num_task_stages).scatter(1, task_ids_mask_inds, 1).view(-1, 1).repeat(1, self.task_emb_size).view(bs, self.task_emb_size * self.num_task_stages).cuda()
+
 
             self.task_embeddings_infer.weight.data.zero_()
 
@@ -364,8 +376,14 @@ class FairseqReviewLM(BaseFairseqModel):
                 num_grad_updates = i
 
                 self.z_optimizer.zero_grad()
-                task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids) if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
-#                task_embedding = task_embedding.view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
+                
+                if self.training_mode == 'meta' or self.training_mode == 'meta_fixstage':
+                    task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids) if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+                elif self.training_mode == 'meta_randmask':
+                    seen_task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)
+                    unseen_task_embedding = self.task_embeddings_infer(global_task_ids).repeat(1, self.num_task_stages)
+                    task_embedding = unseen_task_embedding * task_ids_mask + seen_task_embedding * (1 - task_ids_mask)
+
 
                 logits = self.model(
                     src_tokens,
@@ -377,9 +395,6 @@ class FairseqReviewLM(BaseFairseqModel):
 
                 loss.backward()
                 self.z_optimizer.step()
-
-                if self.log_losses:
-                    losses.append(loss.item())
 
                 if i == 0:
                     outputs['pre_loss_train'] = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
@@ -400,7 +415,7 @@ class FairseqReviewLM(BaseFairseqModel):
 
             outputs['num_grad_updates'] = 1.0 * num_grad_updates
             if self.log_losses:
-                if np.random.uniform() > 0.99:
+                if np.random.uniform() >= 0.0: # 0.99:
                     with open(self.log_losses, 'a') as f:
                         losses_str = '%s\n' % ' '.join(map(str, losses))
                         f.write(losses_str)
@@ -433,9 +448,13 @@ class FairseqReviewLM(BaseFairseqModel):
                 loss.backward()
 
 
-        if self.training_mode == 'meta':
+        if self.training_mode == 'meta' or self.training_mode == 'meta_fixstage':
             task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids).data if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
-            #task_embedding = task_embedding.view(local_task_ids.shape[0], self.task_emb_size * self.num_task_stages)
+        elif self.training_mode == 'meta_randmask':
+            seen_task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)
+            unseen_task_embedding = self.task_embeddings_infer(global_task_ids).repeat(1, self.num_task_stages)
+            task_embedding = unseen_task_embedding.data * task_ids_mask + seen_task_embedding * (1 - task_ids_mask)
+
 
         logits = self.model(
             src_tokens,
@@ -453,16 +472,34 @@ class FairseqReviewLM(BaseFairseqModel):
         return outputs
 
     def upgrade_state_dict_named(self, state_dict, name):
+    #    if "task_embeddings.weight" in state_dict:
+    #        if self.unseen_task_stage == 0:
+    #            mean_task_emb = state_dict["task_embeddings.weight"][torch.LongTensor([0, 1, 3, 4, 6, 8, 9, 12, 14, 15, 17, 21, 22, 25, 26, 27]), :].mean(0)
+    #        elif self.unseen_task_stage == 1:
+    #            mean_task_emb = state_dict["task_embeddings.weight"][torch.LongTensor([105, 154, 246, 352, 425, 454, 508, 554, 599, 602, 613, 614, 615, 620, 624, 628]), :].mean(0)
+    #        elif self.unseen_task_stage == 2:
+    #            mean_task_emb = state_dict["task_embeddings.weight"][torch.LongTensor([629, 630, 631, 632, 633, 634, 635, 636, 637, 639, 640, 641, 642, 643, 644, 645]), :].mean(0)
+
         for k in list(state_dict.keys()):
             print(k)
-            if self.training_mode == 'single_task' and 'task_embeddings_infer' in k:
+            if ((self.training_mode == 'single_task' or self.training_mode == 'single_task_avg_emb') and 'task_embeddings_infer' in k) or (self.training_mode == 'single_task_full_emb' and 'task_embeddings' in k):
                 print('Ignoring: %s' % k)
                 del state_dict[k]
-
 
         if self.training_mode == 'single_task':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
+      #  elif self.training_mode == 'single_task_avg_emb':
+      #      print('Note: Initializing task embedding with average task embs')
+      #      if self.unseen_task_stage >= 0 and self.unseen_task_stage < self.num_task_stages:
+      #          state_dict['task_embedding_init'] = mean_task_emb 
+      #      else:
+      #          print('Note: Invalid unseen_task_stage. Initializing task embedding with zeros')
+      #          state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
+        elif self.training_mode == 'single_task_full_emb':
+            print('Note: Initializing task embedding with zeros')
+            state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size * self.num_task_stages)
+
 
         return state_dict
 

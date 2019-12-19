@@ -51,6 +51,8 @@ class SyntheticLMTask(ReviewTask):
                             help='Num test examples')
         parser.add_argument('--sample_num_tasks', default=1, type=int,
                             help='Num of tasks to sample for each iteration')
+        parser.add_argument('--num_operations', default=10000, type=int,
+                            help='Total number of operations from each stage')
 
 
     @classmethod
@@ -79,60 +81,57 @@ class SyntheticLMTask(ReviewTask):
         self.val_task_ids = []
         self.test_task_ids = []
 
-        self.num_operations = 0
+        self.num_operations = args.num_operations
 
-        # TODO: update load_from_pickle case
         if self.load_from_pickle:
-            full_data = []
-            filelist = args.load_train_tasks_file.split(',')
-            for file in filelist:
-                f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
+            if self.train_unseen_task:
+                f = open(args.load_test_tasks_file, 'rb')
                 data = pickle.load(f)
                 f.close()
 
-                full_data.extend(data['data'])
+                test_tasks = []
+                self.test_task_ids = []
+                for dat in data:
+                    self.test_task_ids.append(dat[1])
 
-            assert len(full_data) >= self.num_test_tasks
-           
-            train_tasks = []
-            for task_data in full_data[:-self.num_test_tasks]:
-                assert len(task_data) >= self.num_train + 2 * self.num_test
-
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
+                    assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                    train = dat[0][:self.num_train]
+                    val = dat[0][self.num_train:self.num_train+self.num_test]
+                    test = dat[0][-self.num_test:]
                 
-                train_tasks.append((train, val, test))
-
-            val_tasks = []
-            for task_data in full_data[-self.num_test_tasks:]:
-                assert len(task_data) >= self.num_train + 2 * self.num_test
-
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
-                
-                val_tasks.append((train, val, test))
-
-            full_data = []
-            filelist = args.load_test_tasks_file.split(',')
-            for file in filelist:
-                f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
+                    test_tasks.append((train, val, test))
+            else:
+                f = open(args.load_train_tasks_file, 'rb')
                 data = pickle.load(f)
                 f.close()
+             
+                assert len(data) >= self.num_train_tasks
+                data = data[:self.num_train_tasks]
+                assert len(data) > self.num_test_tasks
+               
+                train_tasks = []
+                self.train_task_ids = []
+                for dat in data[:-self.num_test_tasks]:
+                    self.train_task_ids.append(dat[1])
 
-                full_data.extend(data['data'])
+                    assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                    train = dat[0][:self.num_train]
+                    val = dat[0][self.num_train:self.num_train+self.num_test]
+                    test = dat[0][-self.num_test:]
+               
+                    train_tasks.append((train, val, test))
 
-            assert len(full_data) >= self.num_test_tasks
+                val_tasks = []
+                self.val_task_ids = []
+                for dat in data[-self.num_test_tasks:]:
+                    self.val_task_ids.append(dat[1])
 
-            test_tasks = []
-            for task_data in full_data[:self.num_test_tasks]:
-                assert len(task_data) >= self.num_train + 2 * self.num_test
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
-                
-                test_tasks.append((train, val, test))
+                    assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                    train = dat[0][:self.num_train]
+                    val = dat[0][self.num_train:self.num_train+self.num_test]
+                    test = dat[0][-self.num_test:]
+               
+                    val_tasks.append((train, val, test))
         else:
             task_generator = TaskGenerator(
                 self.max_tasks,
