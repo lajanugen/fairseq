@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-# import higher
+import higher
 
 from fairseq import utils
 from fairseq.models.classifier import Classifier
@@ -151,6 +151,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                             help='Number of examples in task description.')
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
+        parser.add_argument('--z_lr_inner', default=1e-3, type=float,
+                            help='inner loop learning rate for optimizing z by MAML')
+
 
     @classmethod
     def build_model(cls, args, task):
@@ -179,6 +182,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
+        self.z_lr_inner = args.z_lr_inner
         self.reinit_meta_opt = args.reinit_meta_opt
         self.num_train_tasks = task.num_train_tasks
         self.num_test_tasks = task.num_test_tasks
@@ -208,10 +212,16 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
 
-        else:
-            assert self.training_mode == 'task_agnostic'
+        if 'maml_' in self.training_mode:
+            self.task_embedding_init = nn.Embedding(1, self.task_emb_size)
+            self.inner_opt = optim.Adam(self.task_embedding_init.parameters(), lr=self.z_lr_inner)
+            self.init_z_optimizer = optim.Adam(self.task_embedding_init.parameters(), lr=self.z_lr)
 
         self.model = Classifier(args, task)
+        
+        if self.training_mode == 'maml':
+            self.inner_opt = optim.Adam(self.model.parameters(), lr=self.z_lr)
+
 
     def forward(
         self,
@@ -267,23 +277,85 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             task_embedding = task_embeddings(task_id)
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
+        elif self.training_mode == 'maml_single_task':
+            task_embedding = self.task_embedding_init(torch.LongTensor([0]).cuda())
         else:
-            assert self.training_mode == 'task_agnostic'
             task_embedding = None
+
+
+        if self.training_mode == 'maml_meta' and mode == 'train':
+            set_learning_rate(self.inner_opt, self.z_lr_inner)
+            set_learning_rate(self.init_z_optimizer, self.z_lr)
+
+            outputs['num_grad_updates'] = 1.0 * self.num_grad_updates
+
+            task_id_unique = task_id.unique()
+            task_num = task_id_unique.numel()
+            for i in range(task_num):
+                task_mask = (task_id == task_id_unique[i])
+
+                with higher.innerloop_ctx(
+                    self.task_embedding_init, self.inner_opt, copy_initial_weights=False
+                ) as (femb, diffopt):
+                    for _ in range(self.num_grad_updates):
+                        logits = self.model(
+                            src_tokens[task_mask, :],
+                            task_embedding=femb(torch.LongTensor([0]).cuda()))
+
+                        loss = compute_loss(logits, targets[task_mask], normalize_loss=self.normalize_loss, mask=train_mask[task_mask])
+                        diffopt.step(loss)
+
+                    logits = self.model(
+                        src_tokens[task_mask, :],
+                        task_embedding=femb(torch.LongTensor([0]).cuda()))
+                    loss = compute_loss(logits, targets[task_mask], normalize_loss=self.normalize_loss, mask=test_mask[task_mask])
+                    loss.backward()
+                    
+            self.init_z_optimizer.step()
 
         if 'meta' in self.training_mode:
 
             if num_tasks:
 
-                if self.training_mode == 'meta':
+                if self.training_mode == 'meta_avginit':
+                    if mode == 'eval':
+                        mean_task_embedding = self.task_embeddings.weight.data.mean(0)
+                        self.task_embeddings_eval.weight.data.copy_(mean_task_embedding)
+                    else:
+                        task_embedding_sum = self.task_embeddings.weight.data.sum(0)
+                        sample_task_embeddings = self.task_embeddings(task_id).data
+                        loo_task_embedding_sum = task_embedding_sum.view(1, -1) - sample_task_embeddings
+                        sample_mean_task_embeddings = loo_task_embedding_sum / (self.num_train_tasks - 1)
+                        self.task_embeddings.weight.data[task_id] = sample_mean_task_embeddings
+                        # self.task_embeddings.weight.data[task_id] = self.task_embeddings.weight.data.mean(0)
+
+                elif self.training_mode == 'meta_randinit':
+                    if mode == 'eval':
+                        self.task_embeddings_eval.weight.data.uniform_()
+                    else:
+                        self.task_embeddings.weight.data.uniform_()
+
+                elif self.training_mode == 'meta_zeroinit':
                     if mode == 'eval':
                         self.task_embeddings_eval.weight.data.zero_()
                     else:
                         self.task_embeddings.weight.data.zero_()
 
+                elif self.training_mode == 'meta_onesinit':
+                    if mode == 'eval':
+                        self.task_embeddings_eval.weight.data.fill_(1)
+                    else:
+                        self.task_embeddings.weight.data.fill_(1)
+
                 elif self.training_mode == 'meta_bprop':
                     task_embeddings = torch.zeros(
                         (num_tasks, self.task_emb_size), requires_grad=True, device=src_tokens.device)
+
+                elif self.training_mode == 'maml_meta':
+                    if mode == 'eval':
+                        self.task_embeddings_eval.weight.data.copy_(self.task_embedding_init.weight.data)
+                    else:
+                        self.task_embeddings.weight.data.copy_(self.task_embedding_init.weight.data)
 
                 else:
                     raise ValueError('Unsupported mode')
@@ -366,6 +438,32 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             all_tokens = torch.cat((src_tokens, src_all_tokens), dim=1)
             segment_labels = torch.zeros_like(all_tokens)
             logits = self.model(all_tokens)
+        elif self.training_mode == 'maml' and mode == 'train':
+            step_size = self.z_lr
+            set_learning_rate(self.inner_opt, step_size)
+
+            outputs['num_grad_updates'] = 1.0 * self.num_grad_updates
+
+            task_id_unique = task_id.unique()
+            task_num = task_id_unique.numel()
+            for i in range(task_num):
+                task_mask = (task_id == task_id_unique[i])
+
+                with higher.innerloop_ctx(
+                    self.model, self.inner_opt, copy_initial_weights=False
+                ) as (fnet, diffopt):
+                    for _ in range(self.num_grad_updates):
+                        logits = fnet(src_tokens[task_mask, :])
+
+                        loss = compute_loss(logits, targets[task_mask], normalize_loss=self.normalize_loss, mask=train_mask[task_mask])
+                        diffopt.step(loss)
+            
+                    logits = fnet(src_tokens[task_mask, :])
+
+                    loss = compute_loss(logits, targets[task_mask], normalize_loss=self.normalize_loss, mask=test_mask[task_mask])
+                    loss.backward()
+
+            logits = self.model(src_tokens)
         else:
             logits = self.model(src_tokens, task_embedding.data if 'meta' in self.training_mode else task_embedding)
 
@@ -388,13 +486,22 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         for k in list(state_dict.keys()):
             print(k)
-            if "task_embedding" in k:
+            if "task_embeddings" in k:
                 print('Ignoring: ', k)
                 del state_dict[k]
 
-        if self.training_mode != 'task_agnostic':
+        if self.task_emb_init == 'mean':
+            print('Note: Initializing task embedding with mean')
+            state_dict['task_embedding_init'] = mean_task_emb
+        elif self.task_emb_init == 'random':
+            print('Note: Initializing task embedding randomly')
+            state_dict['task_embedding_init'] = torch.randn(self.task_emb_size)
+        elif self.task_emb_init == 'zeros':
             print('Note: Initializing task embedding with zeros')
             state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
+        elif self.task_emb_init == 'uniform':
+            print('Note: Initializing task embedding with random uniform')
+            state_dict['task_embedding_init'] = torch.FloatTensor(self.task_emb_size).uniform_()
 
         return state_dict
 

@@ -7,16 +7,26 @@ INIT_MDL=$LOAD/checkpoint100.pt
 
 RUN="./scripts/run.sh"
 
-EXP_NAME=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
+#RANDOM_SUFFIX=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 13 ; echo '')
+EXP_NAME="$LOAD-$MODE-$MDL-$FINETUNE-$TEST_SAMPLES"
 
-mkdir -p /checkpoint/llajan/$EXP_NAME
+mkdir -p /checkpoint/annl/transfer_learn/$EXP_NAME
 
-ARGS="-e $EXP_NAME --vocab $VOCAB_SIZE --seqlen $SEQ_LEN -m $MODE --mdl $MDL -f -l $LAYERS"
+ARGS="-e $EXP_NAME --vocab $VOCAB_SIZE --seqlen $SEQ_LEN -m $MODE --mdl $MDL -f -l $LAYERS --zsize $ZSIZE"
 
 if [ $FINETUNE == "no" ]; then
     ARGS="$ARGS --no-training"
 elif [ $FINETUNE == "z" ]; then
-    ARGS="$ARGS -z --lr 1e-2 --zsize $ZSIZE --task-emb-init zeros"
+    ARGS="$ARGS -z "
+    if [ $MODE == "maml_single_task" ]; then
+	ARGS="$ARGS --lr 1e-1 --task-emb-init none "
+    else
+        ARGS="$ARGS --lr 1e-2 --task-emb-init zeros"
+    fi
+fi
+    
+if [ $MODE == "maml" ]; then
+    ARGS="$ARGS --zlr $ZLR --numgrads $NUMGRADS --task-emb-init none "
 fi
 
 if [[ $MDL == "snail" || $MDL == "matching" ]]; then
@@ -33,4 +43,5 @@ fi
 
 $RUN $ARGS --test-samples $TEST_SAMPLES -t 0 --eval
 
-rm /checkpoint/llajan/$EXP_NAME -rf
+#cat /checkpoint/annl/transfer_learn/$EXP_NAME/train.log
+#rm /checkpoint/annl/transfer_learn/$EXP_NAME -rf
