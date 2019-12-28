@@ -105,9 +105,8 @@ class SyntheticLMTask(ReviewTask):
                 data = pickle.load(f)
                 f.close()
              
-                assert len(data) >= self.num_train_tasks
-                data = data[:self.num_train_tasks]
-                assert len(data) > self.num_test_tasks
+                assert len(data) >= self.num_train_tasks+self.num_test_tasks
+                data = data[:self.num_train_tasks+self.num_test_tasks]
                
                 train_tasks = []
                 self.train_task_ids = []
@@ -150,11 +149,9 @@ class SyntheticLMTask(ReviewTask):
                 else:
                     train_task_descriptions_full = task_generator.load_tasks(args.load_train_tasks_file)
 
-                    assert len(train_task_descriptions_full) > self.num_train_tasks
-                    train_task_descriptions_full = train_task_descriptions_full[:self.num_train_tasks]
+                    assert len(train_task_descriptions_full) > self.num_train_tasks+self.num_test_tasks
+                    train_task_descriptions_full = train_task_descriptions_full[:self.num_train_tasks+self.num_test_tasks]
                     
-                    assert len(train_task_descriptions_full) > self.num_test_tasks
-
                     train_task_descriptions = train_task_descriptions_full[:-self.num_test_tasks]
                     val_task_descriptions = train_task_descriptions_full[-self.num_test_tasks:]
             
