@@ -236,6 +236,9 @@ class FairseqReviewLM(BaseFairseqModel):
         parser.add_argument('--unseen_task_stage', default=-1, type=int,
                             help='The operation to be inferred during test')
 
+        parser.add_argument('--k_shot_sample', default=-1, type=int,
+                            help='The number of random samples per task during meta train')
+
 #        parser.add_argument('--max_seq_len', default=128, type=int,
 #                            help='Maximum sequence length.')
 #        parser.add_argument('--max_tasks', default=16, type=int,
@@ -273,6 +276,7 @@ class FairseqReviewLM(BaseFairseqModel):
         self.max_seq_len = task.max_seq_len
         self.sample_num_tasks = task.sample_num_tasks
         self.unseen_task_stage = args.unseen_task_stage
+        self.k_shot_sample = args.k_shot_sample
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -326,6 +330,33 @@ class FairseqReviewLM(BaseFairseqModel):
 
         targets = targets[:, 1:]
         src_tokens = src_tokens[:, self.num_task_stages+1:-1]
+
+        # randomly sample k samples for each task to mimic k-shot learning
+        sample_k_idx = [] 
+        if 'meta' in self.training_mode and mode == 'train' and self.k_shot_sample > 0:
+            task_id_unique = global_task_ids.unique()
+            task_num = task_id_unique.numel()
+            for i in range(task_num):
+                single_task_ids = (global_task_ids == task_id_unique[i]).nonzero()
+
+                num_samples_per_task = single_task_ids.shape[0]
+                k_samples = self.k_shot_sample
+                if num_samples_per_task < self.k_shot_sample:
+                    print('task %d has only %d samples' % (task_id_unique[i], num_samples_per_task))
+                    k_samples = num_samples_per_task
+
+                random_sample_idx = torch.randperm(num_samples_per_task)
+                sample_k_idx.append(single_task_ids[random_sample_idx[:k_samples]])
+
+            sample_k_idx = torch.cat(sample_k_idx).view(-1)
+#            print(sample_k_idx.view(-1))
+
+            # update bs, global_task_ids, local_task_ids, targets, src_tokens
+            bs = sample_k_idx.shape[0]
+            global_task_ids = global_task_ids[sample_k_idx]
+            local_task_ids = local_task_ids[sample_k_idx, :]
+            targets = targets[sample_k_idx, :]
+            src_tokens = src_tokens[sample_k_idx, :]
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
