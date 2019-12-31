@@ -233,9 +233,6 @@ class FairseqReviewLM(BaseFairseqModel):
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
         
-        parser.add_argument('--unseen_task_stage', default=-1, type=int,
-                            help='The operation to be inferred during test')
-
         parser.add_argument('--k_shot_sample', default=-1, type=int,
                             help='The number of random samples per task during meta train')
 
@@ -275,7 +272,6 @@ class FairseqReviewLM(BaseFairseqModel):
         self.num_task_embeddings = task.num_operations
         self.max_seq_len = task.max_seq_len
         self.sample_num_tasks = task.sample_num_tasks
-        self.unseen_task_stage = args.unseen_task_stage
         self.k_shot_sample = args.k_shot_sample
 
         if self.training_mode == 'multitask':
@@ -326,10 +322,11 @@ class FairseqReviewLM(BaseFairseqModel):
         bs = src_tokens.shape[0]
         global_task_ids = src_tokens[:, 0]
         local_task_ids = src_tokens[:, 1:self.num_task_stages+1]
+        unseen_stage_ids = src_tokens[:, self.num_task_stages+1]
 #        task_ids = src_tokens[:, 0:self.num_task_stages+1]
 
         targets = targets[:, 1:]
-        src_tokens = src_tokens[:, self.num_task_stages+1:-1]
+        src_tokens = src_tokens[:, self.num_task_stages+2:-1]
 
         # randomly sample k samples for each task to mimic k-shot learning
         sample_k_idx = [] 
@@ -351,10 +348,11 @@ class FairseqReviewLM(BaseFairseqModel):
             sample_k_idx = torch.cat(sample_k_idx).view(-1)
 #            print(sample_k_idx.view(-1))
 
-            # update bs, global_task_ids, local_task_ids, targets, src_tokens
+            # update bs, global_task_ids, local_task_ids, targets, src_tokens, unseen_stage_ids
             bs = sample_k_idx.shape[0]
             global_task_ids = global_task_ids[sample_k_idx]
             local_task_ids = local_task_ids[sample_k_idx, :]
+            unseen_stage_ids = unseen_stage_ids[sample_k_idx]
             targets = targets[sample_k_idx, :]
             src_tokens = src_tokens[sample_k_idx, :]
 
@@ -376,10 +374,14 @@ class FairseqReviewLM(BaseFairseqModel):
             attn_mask = subsequent_mask(targets.shape[1] + 1)
 
         # Randomly initialized task embedding
-        if self.training_mode == 'multitask' or (self.training_mode == 'single_task' and self.unseen_task_stage == -1):
+        if self.training_mode == 'multitask':
             task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)
         elif self.training_mode == 'single_task' or self.training_mode == 'single_task_avg_emb': 
-            task_embedding = torch.cat([self.task_embedding_init.repeat(bs, 1) if n == self.unseen_task_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
+            task_ids_mask = torch.zeros(bs, self.num_task_stages).cuda().scatter(1, unseen_stage_ids.view(-1, 1), 1).view(-1, 1).repeat(1, self.task_emb_size).view(bs, self.task_emb_size * self.num_task_stages)
+            seen_task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)
+            unseen_task_embedding = self.task_embedding_init.repeat(bs, self.num_task_stages)
+            task_embedding = unseen_task_embedding * task_ids_mask + seen_task_embedding * (1 - task_ids_mask)
+
         elif self.training_mode == 'single_task_full_emb':
             task_embedding = self.task_embedding_init
         else:
@@ -389,8 +391,8 @@ class FairseqReviewLM(BaseFairseqModel):
             if self.training_mode == 'meta':
                 # randomly pick a stage to learn from scratch
                 infer_stage = random.randint(0, self.num_task_stages)
-            elif self.training_mode == 'meta_fixstage':
-                infer_stage = self.unseen_task_stage
+#            elif self.training_mode == 'meta_fixstage':
+#                infer_stage = self.unseen_task_stage
             elif self.training_mode == 'meta_randmask':
                 task_ids_mask_inds = (self.num_task_stages * torch.rand(bs, 1)).long()
                 task_ids_mask = torch.zeros(bs, self.num_task_stages).scatter(1, task_ids_mask_inds, 1).view(-1, 1).repeat(1, self.task_emb_size).view(bs, self.task_emb_size * self.num_task_stages).cuda()
@@ -408,7 +410,7 @@ class FairseqReviewLM(BaseFairseqModel):
 
                 self.z_optimizer.zero_grad()
                 
-                if self.training_mode == 'meta' or self.training_mode == 'meta_fixstage':
+                if self.training_mode == 'meta':  # or self.training_mode == 'meta_fixstage':
                     task_embedding = torch.cat([self.task_embeddings_infer(global_task_ids) if n == infer_stage else self.task_embeddings(local_task_ids[:, torch.LongTensor([n])].view(-1)) for n in range(self.num_task_stages)], 1)
                 elif self.training_mode == 'meta_randmask':
                     seen_task_embedding = self.task_embeddings(local_task_ids).view(bs, self.task_emb_size * self.num_task_stages)

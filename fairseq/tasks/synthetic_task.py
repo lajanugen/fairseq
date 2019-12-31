@@ -35,6 +35,10 @@ class SyntheticLMTask(ReviewTask):
                             help='Train tasks file.')
         parser.add_argument('--load_test_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
                             help='Test tasks file.')
+        parser.add_argument('--load_test_id_file', default='', type=str,
+                            help='Test unseen stage id file.')
+        parser.add_argument('--unseen_task_stage', default=-1, type=int,
+                            help='The operation to be inferred during test')
         parser.add_argument('--load_tasks_file_folder', default='', type=str,
                             help='Tasks file base directory')
         parser.add_argument('--load_from_pickle', action='store_true',
@@ -76,6 +80,7 @@ class SyntheticLMTask(ReviewTask):
         self.num_test_tasks = args.num_test_tasks
         self.sample_num_tasks = args.sample_num_tasks
         self.load_from_pickle = args.load_from_pickle
+        self.unseen_task_stage = args.unseen_task_stage
 
         self.train_task_ids = []
         self.val_task_ids = []
@@ -169,9 +174,36 @@ class SyntheticLMTask(ReviewTask):
 
         if self.train_unseen_task:
             if load_data:
-                train_examples = [task[0] for task in test_tasks]
-                val_examples = [task[1] for task in test_tasks]
-                test_examples = [task[2] for task in test_tasks]
+                if os.path.exists(args.load_test_id_file):
+                    with open(args.load_test_id_file, 'r') as f:
+                        unseen_stage_ids = [int(line.strip()) for line in f]
+                    assert len(unseen_stage_ids) == len(test_tasks)
+
+                    train_examples = []
+                    for i, task in enumerate(test_tasks):
+                        single_task_examples = []
+                        for ex in task[0]:
+                            single_task_examples.append((ex[0], ex[1], unseen_stage_ids[i]))
+                        train_examples.append(single_task_examples)
+
+                    val_examples = []
+                    for i, task in enumerate(test_tasks):
+                        single_task_examples = []
+                        for ex in task[1]:
+                            single_task_examples.append((ex[0], ex[1], unseen_stage_ids[i]))
+                        val_examples.append(single_task_examples)
+
+                    test_examples = []
+                    for i, task in enumerate(test_tasks):
+                        single_task_examples = []
+                        for ex in task[2]:
+                            single_task_examples.append((ex[0], ex[1], unseen_stage_ids[i]))
+                        test_examples.append(single_task_examples)
+
+                else:
+                    train_examples = [task[0] for task in test_tasks]
+                    val_examples = [task[1] for task in test_tasks]
+                    test_examples = [task[2] for task in test_tasks]
 
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
 
@@ -187,7 +219,14 @@ class SyntheticLMTask(ReviewTask):
         input_sentences, output_sentences, src_lengths, tgt_lengths = [], [], [], []
 
         for instance in examples:
-            orig_seq, transform_seq = instance
+            if len(instance) == 2:
+                orig_seq, transform_seq = instance
+                unseen_id = self.unseen_task_stage
+            elif len(instance) == 3:
+                orig_seq, transform_seq, unseen_id = instance
+            else:
+                print('invalid data!')
+                print(instance)
 
             if not self.load_from_pickle:
                 assert len(orig_seq) == self.max_seq_len
@@ -219,8 +258,8 @@ class SyntheticLMTask(ReviewTask):
                 input_sequence = input_sequence[:self.max_seq_len]
                 output_sequence = output_sequence[:self.max_seq_len]
 
-            # prepend task_id
-            input_sequence = task_ids + input_sequence
+            # prepend task_id and unseen_stage_id
+            input_sequence = task_ids + [unseen_id] + input_sequence
             # output_sequence = [task_id] + output_sequence
            
             input_sentences.append(torch.LongTensor(input_sequence))
