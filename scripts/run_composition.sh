@@ -185,12 +185,14 @@ fi
 #	ARGS="$ARGS --task task_suite_v2 --arch cls_v2"
 #fi
 ARGS="$ARGS --task synthetic_lm_task --arch review_tf"
+#ARGS="$ARGS --task synthetic_lm_task_maml --arch review_tf"
 
 ARGS="$ARGS \
 	--dataset-impl raw \
 	--save-dir $CKPT_DIR/$EXP_NAME \
-	--load_train_tasks_file /checkpoint/annl/transfer_learn_composite_v3/task_lists/$TRAIN_FILE \
-	--load_test_tasks_file  /checkpoint/annl/transfer_learn_composite_v3/task_lists/$TEST_FILE \
+	--load_train_tasks_file $CKPT_DIR/task_lists/$TRAIN_FILE \
+	--load_test_tasks_file  $CKPT_DIR/task_lists/tasks-$TEST_FILE.test.txt \
+	--load_test_id_file  $CKPT_DIR/task_lists/tasks-$TEST_FILE.test.id.txt \
 	--unseen_task_stage $UNSEEN_TASK_STAGE \
 	--max-tokens 4096 \
 	--optimizer adam \
@@ -205,6 +207,7 @@ ARGS="$ARGS \
 	--clip-norm 5 \
 	--reset-dataloader \
 	--z_lr $ZLR \
+	--k_shot_sample $KSHOTSAMPLE \
 	/tmp/data "
 
 mkdir -p $CKPT_DIR/$EXP_NAME
