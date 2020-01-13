@@ -81,8 +81,6 @@ class Classifier(nn.Module):
 
     def forward(self, src_tokens, task_embedding=None, attn_mask=None, segment_labels=None, task_ids_mask=None):
 
-       segment_labels = torch.zeros_like(src_tokens)
-
        _, sentence_rep = self.sentence_encoder(
            src_tokens,
            segment_labels=segment_labels,

@@ -1,4 +1,4 @@
-#from pdb import set_trace as bp
+# from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -166,6 +166,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         super(FairseqTransformerClassifier, self).__init__()
 
         dictionary = task.input_vocab
+        self.args = args
         self.padding_idx = dictionary.pad()
         self.vocab_size = dictionary.__len__()
         self.max_tasks = task.max_tasks
@@ -186,6 +187,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.num_task_examples = args.num_task_examples
         self.max_seq_len = task.max_seq_len
         self.train_unseen_task = task.train_unseen_task
+        self.task_emb_cond_type = args.task_emb_cond_type
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -212,6 +214,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             assert self.training_mode == 'task_agnostic'
 
         self.model = Classifier(args, task)
+
+        if self.task_emb_cond_type == 'norm':
+            self.task_emb_init_tensor = torch.cat([
+                torch.ones(2 * args.encoder_layers, self.encoder_embed_dim),
+                torch.zeros(2 * args.encoder_layers, self.encoder_embed_dim)],
+                dim=-1
+            ).contiguous().view(-1)
 
     def forward(
         self,
@@ -268,25 +277,37 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
         else:
-            assert self.training_mode == 'task_agnostic'
+            # assert self.training_mode == 'task_agnostic'
             task_embedding = None
 
         if 'meta' in self.training_mode:
 
-            if num_tasks:
-
-                if self.training_mode == 'meta':
-                    if mode == 'eval':
+            if self.training_mode == 'meta':
+                if mode == 'eval':
+                    if self.task_emb_cond_type == 'norm':
+                        self.task_embeddings_eval.weight.data.copy_(self.task_emb_init_tensor)
+                    else:
                         self.task_embeddings_eval.weight.data.zero_()
+                else:
+                    if self.task_emb_cond_type == 'norm':
+                        self.task_embeddings.weight.data.copy_(self.task_emb_init_tensor)
                     else:
                         self.task_embeddings.weight.data.zero_()
 
-                elif self.training_mode == 'meta_bprop':
-                    task_embeddings = torch.zeros(
-                        (num_tasks, self.task_emb_size), requires_grad=True, device=src_tokens.device)
+            # if num_tasks:
 
-                else:
-                    raise ValueError('Unsupported mode')
+            #     if self.training_mode == 'meta':
+            #         if mode == 'eval':
+            #             self.task_embeddings_eval.weight.data.zero_()
+            #         else:
+            #             self.task_embeddings.weight.data.zero_()
+
+            #     elif self.training_mode == 'meta_bprop':
+            #         task_embeddings = torch.zeros(
+            #             (num_tasks, self.task_emb_size), requires_grad=True, device=src_tokens.device)
+
+            #     else:
+            #         raise ValueError('Unsupported mode')
 
             if self.training_mode == 'meta_bprop':
                 z_optimizer = higher.get_diff_optim(
@@ -391,10 +412,19 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             if "task_embedding" in k:
                 print('Ignoring: ', k)
                 del state_dict[k]
+            # if "task_emb_proj" in k:
+            #     del state_dict[k]
 
         if self.training_mode != 'task_agnostic':
-            print('Note: Initializing task embedding with zeros')
-            state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
+            if self.task_emb_cond_type == 'norm':
+                state_dict['task_embedding_init'] = torch.cat([
+                    torch.ones(2 * self.args.encoder_layers, self.encoder_embed_dim),
+                    torch.zeros(2 * self.args.encoder_layers, self.encoder_embed_dim)],
+                    dim=-1
+                ).contiguous().view(-1)
+            else:
+                print('Note: Initializing task embedding with zeros')
+                state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
 
         return state_dict
 

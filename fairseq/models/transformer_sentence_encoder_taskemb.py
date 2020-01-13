@@ -147,7 +147,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     add_bias_kv=add_bias_kv,
                     add_zero_attn=add_zero_attn,
                     export=export,
-                    task_embedding_dim=task_emb_size if task_emb_cond_type == 'attention' else None
+                    task_emb_cond_type=task_emb_cond_type
                 )
                 for _ in range(num_encoder_layers)
             ]
@@ -158,7 +158,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         else:
             self.emb_layer_norm = None
 
-        if self.task_emb_size != self.embedding_dim:
+        if self.task_emb_size != self.embedding_dim and 'token' in self.task_emb_cond_type:
             self.task_emb_project = nn.Linear(self.task_emb_size, self.embedding_dim)
 
         # Apply initialization of model params after building the model
@@ -198,7 +198,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
 
             if task_ids_mask is not None:
                 task_len = task_ids_mask.shape[1]
-                compositional_embeddings = x[:, -task_len:]
+                # compositional_embeddings = x[:, -task_len:]
+                compositional_embeddings = x[:, :task_len]
                 task_emb_size = task_embedding.shape[-1]
                 if task_emb_size != self.embedding_dim:
                     task_embedding = self.task_emb_project(task_embedding.view(-1, task_emb_size))
@@ -208,7 +209,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     compositional_embeddings = compositional_embeddings.sum(dim=1, keepdim=True)
                     x = torch.cat((compositional_embeddings, x[:, 1:-task_len]), axis=1)
                 else:
-                    x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
+                    # x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
+                    x = torch.cat((compositional_embeddings, x[:, :-task_len]), axis=1)
             elif self.task_emb_cond_type == 'token':
                 if task_embedding.shape[0] == 1:
                     bs = x.shape[0]
@@ -265,21 +267,19 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         if not last_state_only:
             inner_states.append(x)
 
-        for layer in self.layers:
+        split_task_emb = False
+        if self.task_emb_cond_type == 'adapt' or self.task_emb_cond_type == 'norm': 
+            num_layers = len(self.layers)
+            split_shp = task_embedding.shape[-1] // num_layers
+            split_task_emb = True
+
+        for layer_idx, layer in enumerate(self.layers):
             x, _ = layer(
                 x,
                 self_attn_mask=self_attn_mask,
                 self_attn_padding_mask=padding_mask,
-                task_emb=task_embedding if self.task_emb_cond_type == 'attention' else None
+                task_emb=task_embedding.split(split_shp, -1)[layer_idx] if split_task_emb else task_embedding,
             )
-
-            if self.task_emb_cond_type == 'adapt':
-                task_emb_downproj = task_embedding[:, :self.embedding_dim]
-                task_emb_upproj = task_embedding[:, -self.embedding_dim:]
-                adapt = (x * task_emb_downproj).sum(-1, keepdim=True)
-                adapt = F.relu(adapt)
-                adapt = adapt * task_emb_upproj
-                x = x + adapt
 
             if not last_state_only:
                 inner_states.append(x)
