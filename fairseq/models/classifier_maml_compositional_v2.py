@@ -189,15 +189,11 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
 
-        if 'meta' in self.training_mode:
-            self.task_embeddings = nn.Embedding(64, self.task_emb_size * args.task_description_len)
-            self.task_embedding_init = nn.Embedding(1, self.task_emb_size * args.task_description_len)
-            self.task_embedding_init.weight.data.fill_(0)
-            self.inner_opt = optim.Adam(self.task_embeddings.parameters(), lr=self.z_lr)
-            self.init_z_optimizer = optim.Adam(self.task_embedding_init.parameters(), lr=1e-3)
-
-        elif self.training_mode == 'single_task':
-            self.task_embedding_init = nn.Embedding(1, self.task_emb_size * args.task_description_len)
+        self.task_embeddings = nn.Embedding(64, self.task_emb_size * args.task_description_len)
+        self.task_embedding_init = nn.Embedding(1, self.task_emb_size * args.task_description_len)
+        self.task_embedding_init.weight.data.fill_(0)
+        self.inner_opt = optim.Adam(self.task_embeddings.parameters(), lr=self.z_lr)
+        self.init_z_optimizer = optim.Adam(self.task_embedding_init.parameters(), lr=1e-3)
 
         self.model = Classifier(args, task)
 
@@ -245,6 +241,7 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
 
             if mode == 'train':
                 self.init_z_optimizer.zero_grad()
+                self.inner_opt.zero_grad()
 
             self.task_embeddings.weight.data.copy_(self.task_embedding_init.weight.data)
             with higher.innerloop_ctx(
@@ -266,23 +263,25 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
                     task_embedding=task_embedding.view(-1, task_len, self.task_emb_size),
                     task_ids_mask=task_ids_mask)
                 loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
-                loss.backward()
-                meta_grad = self.task_embeddings.weight.grad.sum(0)
+                # loss.backward()
+                # meta_grad = self.task_embeddings.weight.grad.sum(0)
 
             if self.task_embedding_init.weight.grad is None:
                 self.task_embedding_init.weight.sum().backward() 
-            self.task_embedding_init.weight.grad.data.copy_(meta_grad)
+            # self.task_embedding_init.weight.grad.data.copy_(meta_grad)
 
-            if mode == 'train':
-                self.init_z_optimizer.step()
+            # if mode == 'train':
+            #     self.init_z_optimizer.step()
 
-            task_embeddings = self.task_embeddings(task_id)
-            task_embeddings = task_embeddings.view(-1, task_len, self.task_emb_size)
+            # task_embeddings = self.task_embeddings(task_id)
+            # task_embeddings = task_embeddings.view(-1, task_len, self.task_emb_size)
 
-            task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
-            task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
+            # task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
+            # task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
 
-            logits = self.model(src_tokens, task_embeddings, task_ids_mask=task_ids_mask)
+            # logits = self.model(src_tokens, task_embeddings, task_ids_mask=task_ids_mask)
+
+            outputs['post_loss_train'] = loss
 
         else:
 
@@ -291,11 +290,9 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
             task_ids_mask = compositional_task_ids.eq(self.unk_index).unsqueeze(-1).float()
 
             logits = self.model(src_tokens, task_embedding, task_ids_mask=task_ids_mask)
+            outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
 
         outputs['post_accuracy_train'] = compute_accuracy(logits, targets)
-        outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
-        if 'pre_loss_train' in outputs:
-            outputs['train_loss_delta'] = outputs['pre_loss_train'] - outputs['post_loss_train']
 
         return outputs
 

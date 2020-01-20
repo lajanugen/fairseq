@@ -1,9 +1,10 @@
-#from pdb import set_trace as bp
+from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from random import choice
 import higher
 
 from fairseq import utils
@@ -14,6 +15,10 @@ from fairseq.models import (
     register_model,
     register_model_architecture,
 )
+from fairseq.models.transformer_sentence_encoder_taskemb import init_bert_params
+from fairseq.models.transformer_sentence_encoder_taskemb import TransformerSentenceEncoderTaskemb
+
+
 # Note: the register_model "decorator" should immediately precede the
 # definition of the Model class.
 
@@ -54,7 +59,7 @@ def set_learning_rate(optimizer, lr):
 
 
 @register_model('classifier_maml')
-class FairseqTransformerClassifier(BaseFairseqModel):
+class FairseqTransformerClassifierMaml(BaseFairseqModel):
 
     @staticmethod
     def add_args(parser):
@@ -145,6 +150,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                             help='How to initialize rask embedding.')
         parser.add_argument('--num_task_examples', default=100, type=int,
                             help='Number of examples in task description.')
+        parser.add_argument('--encoder_layers', default=1, type=int,
+                            help='Number of encoder layers.')
+        parser.add_argument('--task_description_len', default=3, type=int,
+                            help='Length of task description.')
 
     @classmethod
     def build_model(cls, args, task):
@@ -154,42 +163,39 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         # In this case we'll just return a FairseqRNNClassifier instance.
 
         # Return the wrapped version of the module
-        return FairseqTransformerClassifier(args, task)
+        return FairseqTransformerClassifierMaml(args, task)
 
     def __init__(self, args, task):
-        super(FairseqTransformerClassifier, self).__init__()
+        super(FairseqTransformerClassifierMaml, self).__init__()
 
         dictionary = task.input_vocab
         self.padding_idx = dictionary.pad()
         self.vocab_size = dictionary.__len__()
+        self.unk_index = dictionary.unk_index
+
         self.max_tasks = task.max_tasks
-        self.encoder_type = args.encoder_type
-        self.encoder_embed_dim = args.encoder_embed_dim
+        self.num_train_tasks = task.num_train_tasks
+        self.num_test_tasks = task.num_test_tasks
+        self.max_seq_len = task.max_seq_len
+        self.train_unseen_task = task.train_unseen_task
+        self.task = task
+        # self.task_embedding_inds = task.task_embedding_inds
+        
+        self.args = args
         self.training_mode = args.training_mode
         self.num_grad_updates = args.num_grad_updates
-        self.meta_gradient = args.meta_gradient
         self.normalize_loss = args.normalize_loss
-        self.use_momentum = args.use_momentum
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.reinit_meta_opt = args.reinit_meta_opt
-        self.num_train_tasks = task.num_train_tasks
-        self.num_test_tasks = task.num_test_tasks
-        self.task_emb_init = args.task_emb_init
-        self.num_task_examples = args.num_task_examples
-        self.max_seq_len = task.max_seq_len
 
-        # Train
-        self.task_embeddings = nn.Embedding(
-            64, self.task_emb_size)
-        self.z_optimizer = optim.Adam(
-            self.task_embeddings.parameters(), lr=self.z_lr)
-        # Eval
-        self.task_embeddings_eval = nn.Embedding(
-            64, self.task_emb_size)
-        self.z_optimizer_eval = optim.Adam(
-            self.task_embeddings_eval.parameters(), lr=self.z_lr)
+        # self.task_embeddings = nn.Embedding(64, self.task_emb_size * args.task_description_len)
+        # self.task_embedding_init = nn.Embedding(1, self.task_emb_size * args.task_description_len)
+        self.task_embeddings = nn.Embedding(64, self.task_emb_size)
+        self.task_embedding_init = nn.Embedding(1, self.task_emb_size)
+        self.task_embedding_init.weight.data.fill_(0)
+        self.inner_opt = optim.Adam(self.task_embeddings.parameters(), lr=self.z_lr)
+        self.init_z_optimizer = optim.Adam(self.task_embedding_init.parameters(), lr=1e-3)
 
         self.model = Classifier(args, task)
 
@@ -206,8 +212,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
     ):
         bs = src_tokens.shape[0]
 
-        if num_tasks:
-            num_ex_per_task = bs // num_tasks
+        segment_labels = torch.zeros_like(src_tokens)
 
         task_id = src_tokens[:, 0]
 
@@ -216,40 +221,79 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         outputs = {}
 
-        mean_task_embedding = self.task_embeddings.weight.data.mean(0)
-        task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
+        if self.training_mode == 'maml_meta':
 
-        if mode == 'eval':
-            self.task_embeddings_eval.weight.data.copy_(mean_task_embedding)
-            task_embeddings = self.task_embeddings_eval
-            z_optimizer = self.z_optimizer_eval
+            num_tasks = self.task.sample_num_tasks
+            num_ex_per_task = bs // num_tasks
+            split_ratio = 0.5
+            N_train = int(split_ratio * num_ex_per_task)
+            train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
+            train_mask = train_mask.view(-1)
+            test_mask = 1 - train_mask
+
+            assert num_tasks <= 64
+            task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
+
+            if mode == 'train':
+                self.init_z_optimizer.zero_grad()
+                self.inner_opt.zero_grad()
+
+            self.task_embeddings.weight.data.copy_(self.task_embedding_init.weight.data)
+            with higher.innerloop_ctx(
+                self.task_embeddings, self.inner_opt, copy_initial_weights=False
+            ) as (femb, diffopt):
+                for _ in range(self.num_grad_updates):
+                    task_embedding = femb(task_id)
+                    logits = self.model(
+                        src_tokens,
+                        task_embedding=task_embedding)
+
+                    loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
+                    diffopt.step(loss)
+
+                task_embedding = femb(task_id)
+                logits = self.model(
+                    src_tokens,
+                    task_embedding=task_embedding)
+                loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
+
+                # Moved to outer loop
+                # loss.backward()
+                # meta_grad = self.task_embeddings.weight.grad.sum(0)
+
+            if self.task_embedding_init.weight.grad is None:
+                self.task_embedding_init.weight.sum().backward() 
+
+            # self.task_embedding_init.weight.grad.data.copy_(meta_grad)
+            # if mode == 'train':
+            #     self.init_z_optimizer.step()
+
+            # task_embeddings = self.task_embeddings(task_id)
+            # task_embeddings = task_embeddings.view(-1, task_len, self.task_emb_size)
+
+            # task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
+            # task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
+
+            # logits = self.model(src_tokens, task_embeddings) #, task_ids_mask=task_ids_mask)
+            outputs['post_loss_train'] = loss
+
         else:
-            self.task_embeddings.weight.data.copy_(mean_task_embedding)
-            task_embeddings = self.task_embeddings
-            z_optimizer = self.z_optimizer
 
-        task_embedding = task_embeddings(task_id)
+            task_embedding = self.task_embedding_init(torch.LongTensor([0]).cuda())
+            # task_embedding = task_embedding.view(-1, task_len, self.task_emb_size)
+            # task_ids_mask = compositional_task_ids.eq(self.unk_index).unsqueeze(-1).float()
 
-        #TypeError: Can't instantiate abstract class InnerFunctionalModuleList with abstract methods forward
-        with higher.innerloop_ctx(self.model, z_optimizer) as (model, diffopt):
+            logits = self.model(src_tokens, task_embedding) # , task_ids_mask=task_ids_mask)
 
-            for i in range(self.num_grad_updates):
-
-                logits = model(src_tokens, task_embedding)
-                loss = compute_loss(logits, targets, normalize_loss=True)
-
-                diffopt.step(loss)
-
-            logits = model(src_tokens, task_embedding)
-
-            outputs['post_accuracy_train'] = compute_accuracy(logits, targets)
             outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
+
+        outputs['post_accuracy_train'] = compute_accuracy(logits, targets)
 
         return outputs
 
 
 @register_model_architecture('classifier_maml', 'cls_maml')
-def toy_transformer_cls(args):
+def toy_transformer_cls_maml(args):
 
     args.regularization = getattr(args, 'regularization', False)
 
