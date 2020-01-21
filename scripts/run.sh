@@ -175,15 +175,17 @@ fi
 
 if [ $MODEL == "snail" ]; then
 	ARGS="$ARGS --task task_suite_snail --arch cls_seq --meta_num_ex $((UNSEEN_NUM_TRAIN+1))"
+	if [ $UNSEEN_NUM_TRAIN == "40" ] ||[ $UNSEEN_NUM_TRAIN == "80" ]; then
+	  ARGS="$ARGS --max-tokens 1024"
+	fi
 elif [ $MODEL == "matching" ]; then
 	ARGS="$ARGS --task task_suite_matching --arch cls_match --meta_num_ex $UNSEEN_NUM_TRAIN"
 elif [ $MODEL == "maml" ]; then
-	# ARGS="$ARGS --task task_suite_v2 --disable-validation --max-tokens 512"
-	ARGS="$ARGS --task task_suite_v2 --max-tokens 512"
+	ARGS="$ARGS --task task_suite_v2 --disable-validation --max-tokens 256"
+  # ARGS="$ARGS --task task_suite_v2 --max-tokens 512"
   if [ $COMPOSITIONAL == "1" ]; then ARGS="$ARGS --arch cls_comp_maml"; else ARGS="$ARGS --arch cls_maml"; fi
 else
-	# ARGS="$ARGS --task task_suite_v2"
-	ARGS="$ARGS --task task_suite_v2 --max-tokens 256"
+  ARGS="$ARGS --task task_suite_v2"
   if [ $COMPOSITIONAL == "1" ]; then ARGS="$ARGS --arch cls_comp"; else ARGS="$ARGS --arch cls_v2"; fi
 fi
 # --task_emb_cond_type token/norm/adapt
@@ -191,28 +193,29 @@ fi
 if [ $COMPOSITIONAL == "1" ]; then
   ARGS="$ARGS --compositional --load_tasks scripts/task_split/zeroshot_v3"
 else
-  ARGS="$ARGS --load_tasks scripts/task_split/tasks"
+  ARGS="$ARGS --load_tasks /home/llajan/b6/task_split/tasks"
 fi
 
 ARGS=" \
-	--save-dir $CKPT_DIR/$EXP_NAME \
-	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
-	--max-tokens 2048 \
-	--optimizer adam \
-	--encoder_type transformer \
-	--num_test $UNSEEN_NUM_TEST \
-	--vocab_size $VOCAB_SIZE \
-	--max_seq_len $SEQ_LEN \
-	--num_train_tasks $NUM_TRAIN_TASKS \
-	--num_test_tasks $NUM_TEST_TASKS \
-	--max_tasks $MAX_TASKS \
+  --save-dir $CKPT_DIR/$EXP_NAME \
+  --task_descriptions_dir $CKPT_DIR/$EXP_NAME \
+  --max-tokens 2048 \
+  --optimizer adam \
+  --encoder_type transformer \
+  --num_test $UNSEEN_NUM_TEST \
+  --vocab_size $VOCAB_SIZE \
+  --max_seq_len $SEQ_LEN \
+  --num_train_tasks $NUM_TRAIN_TASKS \
+  --num_test_tasks $NUM_TEST_TASKS \
+  --max_tasks $MAX_TASKS \
   --batch_version \
-	--clip-norm 5 \
-	--normalize_loss \
-	--reset-dataloader \
-	--z_lr $ZLR \
-	--task_emb_cond_type cls_token \
-	$ARGS"
+  --clip-norm 5 \
+  --normalize_loss \
+  --reset-dataloader \
+  --z_lr $ZLR \
+  --task_emb_cond_type cls_token \
+  --save-interval 10 \
+  $ARGS"
 # 	--disable-validation \
 
 mkdir -p $CKPT_DIR/$EXP_NAME
