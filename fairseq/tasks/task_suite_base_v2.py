@@ -5,7 +5,8 @@ import torch
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
-from fairseq.tasks.task_generator_v2 import TaskGenerator
+# from fairseq.tasks.task_generator_v2 import TaskGenerator
+from fairseq.tasks.task_generator import TaskGenerator
 
 import numpy as np
 # from pdb import set_trace as bp
@@ -128,7 +129,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.num_classes,
                 args.task_descriptions_dir)
             train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
-            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_500.txt')
+            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_100.txt')
 
             self.train_task_descriptions = train_task_descriptions 
 
@@ -349,6 +350,11 @@ class TaskSuiteBase_v2(FairseqTask):
 
         if not self.no_training:
             optimizer.backward(loss)
+
+        if model.training_mode == 'maml_meta':
+            meta_grad = model.task_embeddings.weight.grad.sum(0)
+            model.task_embedding_init.weight.grad.data.copy_(meta_grad)
+            model.init_z_optimizer.step()
 
         return loss, sample_size, logging_output
 

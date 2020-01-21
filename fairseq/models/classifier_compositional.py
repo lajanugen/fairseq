@@ -202,7 +202,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size * args.task_description_len))
 
-
         self.model = Classifier(args, task)
 
     def forward(
@@ -217,9 +216,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         mode='train'
     ):
         bs = src_tokens.shape[0]
-
-        segment_labels = torch.zeros_like(src_tokens)
-
         task_id = src_tokens[:, 0]
 
         task_len = self.args.task_description_len
@@ -228,20 +224,12 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         # Strip off task id
         src_tokens = src_tokens[:, 1:]
 
-        if 'meta' in self.training_mode:
-            task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
-            task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
-
-            task_embeddings = self.task_embeddings[mode]
-
         outputs = {}
 
         if self.training_mode == 'single_task':
             task_embedding = self.task_embedding_init
             task_embedding = task_embedding.unsqueeze(0).view(-1, task_len, self.task_emb_size)
             task_ids_mask = compositional_task_ids.eq(self.unk_index).unsqueeze(-1).float()
-        else:
-            task_embedding = None
 
         if 'meta' in self.training_mode:
 
@@ -250,6 +238,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             # mean_embeddings = [learned_embeddings[self.task_embedding_inds[i][0]: self.task_embedding_inds[i][1] + 1].mean(0) for i in range(3)]
             # mean_embedding = torch.cat(mean_embeddings, 0)
             # self.task_embeddings[mode].weight.data.copy_(mean_embedding)
+
+            task_ids_mask_inds = (task_len * torch.rand(bs, 1)).long()
+            task_ids_mask = torch.zeros(bs, task_len).scatter(1, task_ids_mask_inds, 1).unsqueeze(-1).cuda()
+            task_embeddings = self.task_embeddings[mode]
 
             self.task_embeddings[mode].weight.data.zero_()
             z_optimizer = self.z_optimizer[mode]
