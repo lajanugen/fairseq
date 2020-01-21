@@ -367,13 +367,15 @@ def master_main():
     if no_training:
         args.max_epoch = 1
 
-    for ckpt in range(1, 11):
+    # for ckpt in range(1, 11):
+    for ckpt in range(10, 101, 10):
         args.restore_file = '%s/checkpoint%d.pt' % (restore_path, ckpt)
         assert os.path.exists(args.restore_file)
         state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
         all_stats = []
-        for task in range(20):
+        # for task in range(20):
+        for task in range(16):
             args.eval_task_id = task
 
             train_stats, valid_stats = cli_main(args, examples, state)
@@ -392,7 +394,9 @@ def master_main():
     state = checkpoint_utils.load_checkpoint_to_cpu(args.restore_file)
 
     train_accs, test_accs = [], []
-    for task in range(20, 100):
+    # for task in range(20, 100):
+    # for task in range(100):
+    for task in range(16, 64):
         print(best_ckpt, task)
         args.eval_task_id = task
 
@@ -405,8 +409,11 @@ def master_main():
 
     sys.stdout = stdout
 
-    print('test, train, best_val, best_train, best_num_iter, best_ckpt')
+    # print('test, train, best_val, best_train, best_num_iter, best_ckpt')
     print('%s %s %.2f %.2f %.2f %.2f %d %d' % (restore_path, args.num_train, test, train, val, best_train, best_num_iter, best_ckpt))
+
+    # for train_acc, test_acc in zip(train_accs, test_accs):
+    #     print(train_acc, test_acc)
 
 
 if __name__ == '__main__':
