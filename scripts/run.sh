@@ -1,5 +1,6 @@
 # Save dir
-CKPT_DIR=/home/llajan/b6/fcls
+CKPT_DIR=/home/llajan/b6/fcls6
+# CKPT_DIR=/home/llajan/b6/fcls
 EXP_NAME=test
 TRAINING_MODE=multitask
 
@@ -13,6 +14,7 @@ ZLR=1e-2
 TASK_EMB_SIZE=128
 NUM_GRAD_UPDATES=10
 TASK_EMB_COND_TYPE=encoder
+COMPOSITIONAL=0
 
 # Logging
 DISABLE_VALID=0
@@ -28,11 +30,16 @@ EVAL_TASK_ID=0
 FASTEVAL=no
 
 # Task settings
-MAX_TASKS=2000
+# MAX_TASKS=2000
+# MAX_TASKS=6000
+MAX_TASKS=1200
 VOCAB_SIZE=12
 SEQ_LEN=5
+# NUM_TRAIN_TASKS=1000
+# NUM_TRAIN_TASKS=5100
 NUM_TRAIN_TASKS=500
 NUM_TEST_TASKS=64
+# NUM_TEST_TASKS=100
 SEEN_NUM_TRAIN=500
 UNSEEN_NUM_TRAIN=500
 UNSEEN_NUM_TEST=500
@@ -117,6 +124,9 @@ case $key in
     --novalid)
     DISABLE_VALID=1
     shift; ;;
+    --compositional)
+    COMPOSITIONAL=1
+    shift; ;;
 esac
 done
 
@@ -167,14 +177,27 @@ if [ $MODEL == "snail" ]; then
 	ARGS="$ARGS --task task_suite_snail --arch cls_seq --meta_num_ex $((UNSEEN_NUM_TRAIN+1))"
 elif [ $MODEL == "matching" ]; then
 	ARGS="$ARGS --task task_suite_matching --arch cls_match --meta_num_ex $UNSEEN_NUM_TRAIN"
+elif [ $MODEL == "maml" ]; then
+	# ARGS="$ARGS --task task_suite_v2 --disable-validation --max-tokens 512"
+	ARGS="$ARGS --task task_suite_v2 --max-tokens 512"
+  if [ $COMPOSITIONAL == "1" ]; then ARGS="$ARGS --arch cls_comp_maml"; else ARGS="$ARGS --arch cls_maml"; fi
 else
-	ARGS="$ARGS --task task_suite_v2 --arch cls_v2"
+	# ARGS="$ARGS --task task_suite_v2"
+	ARGS="$ARGS --task task_suite_v2 --max-tokens 256"
+  if [ $COMPOSITIONAL == "1" ]; then ARGS="$ARGS --arch cls_comp"; else ARGS="$ARGS --arch cls_v2"; fi
+fi
+# --task_emb_cond_type token/norm/adapt
+
+if [ $COMPOSITIONAL == "1" ]; then
+  ARGS="$ARGS --compositional --load_tasks scripts/task_split/zeroshot_v3"
+else
+  ARGS="$ARGS --load_tasks scripts/task_split/tasks"
 fi
 
-ARGS="$ARGS \
+ARGS=" \
 	--save-dir $CKPT_DIR/$EXP_NAME \
 	--task_descriptions_dir $CKPT_DIR/$EXP_NAME \
-	--max-tokens 1024 \
+	--max-tokens 2048 \
 	--optimizer adam \
 	--encoder_type transformer \
 	--num_test $UNSEEN_NUM_TEST \
@@ -183,12 +206,14 @@ ARGS="$ARGS \
 	--num_train_tasks $NUM_TRAIN_TASKS \
 	--num_test_tasks $NUM_TEST_TASKS \
 	--max_tasks $MAX_TASKS \
-	--task_emb_cond_type cls_token \
   --batch_version \
 	--clip-norm 5 \
 	--normalize_loss \
 	--reset-dataloader \
-	--z_lr $ZLR"
+	--z_lr $ZLR \
+	--task_emb_cond_type cls_token \
+	$ARGS"
+# 	--disable-validation \
 
 mkdir -p $CKPT_DIR/$EXP_NAME
 
