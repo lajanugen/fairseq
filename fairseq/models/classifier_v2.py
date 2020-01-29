@@ -1,4 +1,4 @@
-# from pdb import set_trace as bp
+from pdb import set_trace as bp
 import numpy as np
 import torch
 import torch.nn as nn
@@ -8,6 +8,7 @@ import torch.optim as optim
 
 from fairseq import utils
 from fairseq.models.classifier import Classifier
+# from fairseq.models.classifier_rnn import Classifier
 
 from fairseq.models import (
     BaseFairseqModel,
@@ -188,6 +189,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.max_seq_len = task.max_seq_len
         self.train_unseen_task = task.train_unseen_task
         self.task_emb_cond_type = args.task_emb_cond_type
+        self.sample_num_tasks = args.sample_num_tasks
+        self.samples_per_task = args.max_sentences
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -195,17 +198,21 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             self.task_embeddings_eval = nn.Embedding(
                 self.num_test_tasks, self.task_emb_size)
 
-        elif 'meta' in self.training_mode and self.training_mode != 'meta_bprop':
+        elif 'meta' in self.training_mode:
             # Train
             self.task_embeddings = nn.Embedding(
-                self.num_train_tasks, self.task_emb_size)
+                self.sample_num_tasks, self.task_emb_size)
+                # self.num_train_tasks, self.task_emb_size)
             self.z_optimizer = optim.Adam(
                 self.task_embeddings.parameters(), lr=self.z_lr)
             # Eval
             self.task_embeddings_eval = nn.Embedding(
-                self.num_test_tasks, self.task_emb_size)
+                self.sample_num_tasks, self.task_emb_size)
+                # self.num_test_tasks, self.task_emb_size)
             self.z_optimizer_eval = optim.Adam(
                 self.task_embeddings_eval.parameters(), lr=self.z_lr)
+
+            self.task_id = torch.arange(self.sample_num_tasks).view(-1, 1).repeat(1, self.samples_per_task).view(-1).cuda()
 
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
@@ -214,6 +221,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             assert self.training_mode == 'task_agnostic'
 
         self.model = Classifier(args, task)
+        self.model_parameters = self.model.parameters()
 
         if self.task_emb_cond_type == 'norm':
             self.task_emb_init_tensor = torch.cat([
@@ -231,12 +239,16 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         num_tasks=None,
         split_data=False,
         optimizer=None,
-        mode='train'
+        mode='train',
+        epoch_itr=None
     ):
         bs = src_tokens.shape[0]
+        task_id = src_tokens[:, 0]
 
         if num_tasks:
             num_ex_per_task = bs // num_tasks
+            if mode == 'train':
+                task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
 
         if split_data:
             if self.train_unseen_task:
@@ -258,14 +270,19 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         segment_labels = torch.zeros_like(src_tokens)
 
-        task_id = src_tokens[:, 0]
+        # task_id_rshp = task_id.view(-1, num_ex_per_task)
+        # assert task_id_rshp.eq(task_id_rshp[:, [0]]).all()
+        # assert num_ex_per_task == self.samples_per_task
+
+        # task_id = self.task_id
+        assert task_id.shape[0] == bs
 
         # Strip off task id
         src_tokens = src_tokens[:, 1:]
 
         outputs = {}
 
-        if ('meta' in self.training_mode or self.training_mode == 'multitask') and (self.training_mode != 'meta_bprop'):
+        if ('meta' in self.training_mode or self.training_mode == 'multitask'):
             if mode == 'eval':
                 task_embeddings = self.task_embeddings_eval
             else:
@@ -294,55 +311,39 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                     else:
                         self.task_embeddings.weight.data.zero_()
 
-            # if num_tasks:
-
-            #     if self.training_mode == 'meta':
-            #         if mode == 'eval':
-            #             self.task_embeddings_eval.weight.data.zero_()
-            #         else:
-            #             self.task_embeddings.weight.data.zero_()
-
-            #     elif self.training_mode == 'meta_bprop':
-            #         task_embeddings = torch.zeros(
-            #             (num_tasks, self.task_emb_size), requires_grad=True, device=src_tokens.device)
-
-            #     else:
-            #         raise ValueError('Unsupported mode')
-
-            if self.training_mode == 'meta_bprop':
-                z_optimizer = higher.get_diff_optim(
-                   optim.Adam([task_embeddings], lr=self.z_lr),
-                   [task_embeddings], device=src_tokens.device
-                )
+            if mode == 'eval':
+                z_optimizer = self.z_optimizer_eval
             else:
-                if mode == 'eval':
-                    z_optimizer = self.z_optimizer_eval
-                else:
-                    z_optimizer = self.z_optimizer
+                z_optimizer = self.z_optimizer
 
             step_size = self.z_lr
             set_learning_rate(z_optimizer, step_size)
 
             losses = []
-            for i in range(self.num_grad_updates):
+
+            # if epoch_itr is not None:
+            #     max_grad_updates = epoch_itr.epoch // 4 + 1
+            #     max_grad_updates = epoch_itr.epoch // 2 + 1
+            #     max_grad_updates = epoch_itr.epoch + 1
+            # else:
+            #     max_grad_updates = self.num_grad_updates
+
+            max_grad_updates = self.num_grad_updates
+
+            # for i in range(self.num_grad_updates):
+            for i in range(max_grad_updates):
 
                 num_grad_updates = i
 
-                if self.training_mode == 'meta_bprop':
-                    task_embedding = task_embeddings.repeat(1, num_ex_per_task).view(bs, -1)
-                else:
-                    z_optimizer.zero_grad()
-                    task_embedding = task_embeddings(task_id)
+                z_optimizer.zero_grad()
+                task_embedding = task_embeddings(task_id)
 
                 logits = self.model(src_tokens, task_embedding)
                 loss = compute_loss(logits, targets, normalize_loss=True, mask=train_mask)
-                losses.append(loss.item())
+                # losses.append(loss.item())
 
-                if self.training_mode == 'meta_bprop':
-                    task_embeddings, = z_optimizer.step(loss, params=[task_embeddings])
-                else:
-                    loss.backward()
-                    z_optimizer.step()
+                loss.backward()
+                z_optimizer.step()
 
                 if self.log_losses:
                     losses.append(loss.item())
@@ -366,29 +367,19 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
                     prev_loss = cur_loss
 
-            outputs['num_grad_updates'] = 1.0 * num_grad_updates
-            if self.log_losses:
-                if np.random.uniform() > 0.99:
-                    with open(self.log_losses, 'a') as f:
-                        losses_str = '%s\n' % ' '.join(map(str, losses))
-                        f.write(losses_str)
+            # outputs['num_grad_updates'] = 1.0 * max_grad_updates
+            # if self.log_losses:
+            #     if np.random.uniform() > 0.99:
+            #         with open(self.log_losses, 'a') as f:
+            #             losses_str = '%s\n' % ' '.join(map(str, losses))
+            #             f.write(losses_str)
 
-        # task_embeddings are held fixed in meta modes
-        if self.training_mode == 'meta_bprop':
-            task_embedding = task_embeddings.repeat(1, num_ex_per_task).view(bs, -1)
+            if mode == 'train':
+                # Clear gradients computed for model parameters
+                assert optimizer is not None
+                optimizer.zero_grad()
 
-        if self.training_mode == 'task_examples':
-            src_all_seq_len = src_all_tokens.shape[1]
-            src_seq_len = self.max_seq_len + 1
-            src_all_num = src_all_seq_len / src_seq_len
-            if src_all_num > self.num_task_examples:
-                rand_ex_pos = np.random.randint(0, src_all_num - self.num_task_examples)
-                src_all_tokens = src_all_tokens[:, rand_ex_pos * src_seq_len: (rand_ex_pos + 1) * src_seq_len]
-            all_tokens = torch.cat((src_tokens, src_all_tokens), dim=1)
-            segment_labels = torch.zeros_like(all_tokens)
-            logits = self.model(all_tokens)
-        else:
-            logits = self.model(src_tokens, task_embedding.data if 'meta' in self.training_mode else task_embedding)
+        logits = self.model(src_tokens, task_embedding.data if 'meta' in self.training_mode else task_embedding)
 
         outputs['post_accuracy_train'] = compute_accuracy(logits, targets, mask=train_mask)
         outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
@@ -403,9 +394,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         return outputs
 
     def upgrade_state_dict_named(self, state_dict, name):
-        if "task_embeddings.weight" in state_dict:
-            assert state_dict["task_embeddings.weight"].shape[0] == self.num_train_tasks
-            mean_task_emb = state_dict["task_embeddings.weight"].mean(0)
+        # if "task_embeddings.weight" in state_dict:
+        #     assert state_dict["task_embeddings.weight"].shape[0] == self.num_train_tasks
+        #     mean_task_emb = state_dict["task_embeddings.weight"].mean(0)
 
         for k in list(state_dict.keys()):
             print(k)

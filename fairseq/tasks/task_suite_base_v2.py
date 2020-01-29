@@ -9,7 +9,7 @@ from fairseq.tasks import FairseqTask, register_task
 from fairseq.tasks.task_generator import TaskGenerator
 
 import numpy as np
-# from pdb import set_trace as bp
+from pdb import set_trace as bp
 
 class Dictionary_toy(Dictionary):
     def __init__(self, no_special_tokens=False):
@@ -338,9 +338,12 @@ class TaskSuiteBase_v2(FairseqTask):
 
         return loss, sample_size, logging_output
 
-    def train_step(self, sample, model, criterion, optimizer, ignore_grad=False):
+    def train_step(self, sample, model, criterion, optimizer, ignore_grad=False, epoch_itr=None):
         model.train()
         optimizer.zero_grad()
+        sample['net_input']['num_tasks'] = self.sample_num_tasks
+        sample['net_input']['optimizer'] = optimizer
+        sample['net_input']['epoch_itr'] = epoch_itr
         if self.batch_version:
             loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
         else:
@@ -362,6 +365,7 @@ class TaskSuiteBase_v2(FairseqTask):
         model.eval()
         # We need gradient computation
         sample['net_input']['mode'] = 'eval'
+        sample['net_input']['num_tasks'] = self.sample_num_tasks
         if 'meta' in model.training_mode:
             # Eval mode: Use 25% of the data to validation. The 75% is used for training by meta-learned
             # models and ignored by non-meta learning models.
