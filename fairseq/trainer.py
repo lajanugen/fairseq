@@ -276,7 +276,7 @@ class Trainer(object):
             epoch=epoch,
         )
 
-    def train_step(self, samples, dummy_batch=False, raise_oom=False):
+    def train_step(self, samples, dummy_batch=False, raise_oom=False, epoch_itr=None):
         """Do forward, backward and parameter update."""
         if self._dummy_batch is None:
             self._dummy_batch = samples[0]
@@ -316,7 +316,7 @@ class Trainer(object):
                 # forward and backward
                 loss, sample_size, logging_output = self.task.train_step(
                     sample, self.model, self.criterion, self.optimizer,
-                    ignore_grad
+                    ignore_grad, epoch_itr=epoch_itr
                 )
 
                 if not ignore_grad:

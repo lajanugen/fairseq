@@ -230,7 +230,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     task_embedding = self.task_emb_project(task_embedding)
                 task_embedding = task_embedding.unsqueeze(1)
                 if cls_mask is None:
-                    x = torch.cat((task_embedding, x[:, 1:]), dim=1)
+                    # x = torch.cat((task_embedding, x[:, 1:]), dim=1)
+                    x = torch.cat((task_embedding + x[:, [0]], x[:, 1:]), dim=1)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)

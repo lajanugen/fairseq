@@ -118,7 +118,7 @@ def train(args, trainer, task, epoch_itr):
     valid_subsets = args.valid_subset.split(',')
     max_update = args.max_update or math.inf
     for i, samples in enumerate(progress, start=epoch_itr.iterations_in_epoch):
-        log_output = trainer.train_step(samples)
+        log_output = trainer.train_step(samples, epoch_itr=epoch_itr)
         if log_output is None:
             continue
 

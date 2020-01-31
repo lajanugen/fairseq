@@ -212,7 +212,11 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             self.z_optimizer_eval = optim.Adam(
                 self.task_embeddings_eval.parameters(), lr=self.z_lr)
 
-            self.task_id = torch.arange(self.sample_num_tasks).view(-1, 1).repeat(1, self.samples_per_task).view(-1).cuda()
+            if 'v4' in self.training_mode:
+                self.task_embedding_init = nn.Embedding(1, self.task_emb_size)
+                self.task_embedding_init.weight.data.zero_()
+                self.zinit_optimizer = optim.Adam(
+                    self.task_embedding_init.parameters(), lr=1e-3)
 
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
@@ -250,32 +254,17 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             if mode == 'train':
                 task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
 
-        if split_data:
-            if self.train_unseen_task:
-                split_ratio = 0.5
-            else:
-                split_ratio = 0.7
+        assert task_id.shape[0] == bs
 
-            if num_tasks:
-                N_train = int(split_ratio * num_ex_per_task)
-                train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
-                train_mask = train_mask.view(-1)
-            else:
-                N_train = int(split_ratio * bs)
-                train_mask = torch.cat((torch.ones(N_train), torch.zeros(bs - N_train)), dim=0).cuda()
+        if split_data:
+            split_ratio = 0.5
+            N_train = int(split_ratio * num_ex_per_task)
+            train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
+            train_mask = train_mask.view(-1)
             test_mask = 1 - train_mask
         else:
             train_mask = torch.ones(bs).cuda()
             test_mask = train_mask
-
-        segment_labels = torch.zeros_like(src_tokens)
-
-        # task_id_rshp = task_id.view(-1, num_ex_per_task)
-        # assert task_id_rshp.eq(task_id_rshp[:, [0]]).all()
-        # assert num_ex_per_task == self.samples_per_task
-
-        # task_id = self.task_id
-        assert task_id.shape[0] == bs
 
         # Strip off task id
         src_tokens = src_tokens[:, 1:]
@@ -299,17 +288,16 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         if 'meta' in self.training_mode:
 
-            if self.training_mode == 'meta':
-                if mode == 'eval':
-                    if self.task_emb_cond_type == 'norm':
-                        self.task_embeddings_eval.weight.data.copy_(self.task_emb_init_tensor)
-                    else:
-                        self.task_embeddings_eval.weight.data.zero_()
+            if mode == 'eval':
+                if self.task_emb_cond_type == 'norm':
+                    self.task_embeddings_eval.weight.data.copy_(self.task_emb_init_tensor)
                 else:
-                    if self.task_emb_cond_type == 'norm':
-                        self.task_embeddings.weight.data.copy_(self.task_emb_init_tensor)
-                    else:
-                        self.task_embeddings.weight.data.zero_()
+                    self.task_embeddings_eval.weight.data.zero_()
+            else:
+                if self.task_emb_cond_type == 'norm':
+                    self.task_embeddings.weight.data.copy_(self.task_emb_init_tensor)
+                else:
+                    self.task_embeddings.weight.data.zero_()
 
             if mode == 'eval':
                 z_optimizer = self.z_optimizer_eval
@@ -321,17 +309,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
             losses = []
 
-            # if epoch_itr is not None:
-            #     max_grad_updates = epoch_itr.epoch // 4 + 1
-            #     max_grad_updates = epoch_itr.epoch // 2 + 1
-            #     max_grad_updates = epoch_itr.epoch + 1
-            # else:
-            #     max_grad_updates = self.num_grad_updates
-
-            max_grad_updates = self.num_grad_updates
-
-            # for i in range(self.num_grad_updates):
-            for i in range(max_grad_updates):
+            for i in range(self.num_grad_updates):
 
                 num_grad_updates = i
 
@@ -340,13 +318,9 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
                 logits = self.model(src_tokens, task_embedding)
                 loss = compute_loss(logits, targets, normalize_loss=True, mask=train_mask)
-                # losses.append(loss.item())
 
                 loss.backward()
                 z_optimizer.step()
-
-                if self.log_losses:
-                    losses.append(loss.item())
 
                 if i == 0:
                     outputs['pre_accuracy_train'] = compute_accuracy(logits, targets, mask=train_mask)
@@ -355,29 +329,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                         outputs['pre_accuracy_test'] = compute_accuracy(logits, targets, mask=test_mask)
                         outputs['pre_loss_test'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
 
-                    prev_loss = loss.item()
-                else:
-                    cur_loss = loss.item()
+            # if mode == 'train':
+            #     # Clear gradients computed for model parameters
+            #     assert optimizer is not None
+            #     optimizer.zero_grad()
 
-                    if cur_loss > prev_loss:
-                        step_size /= 2
-                        set_learning_rate(z_optimizer, step_size)
-                        if step_size < 1e-6:
-                            break
-
-                    prev_loss = cur_loss
-
-            # outputs['num_grad_updates'] = 1.0 * max_grad_updates
-            # if self.log_losses:
-            #     if np.random.uniform() > 0.99:
-            #         with open(self.log_losses, 'a') as f:
-            #             losses_str = '%s\n' % ' '.join(map(str, losses))
-            #             f.write(losses_str)
-
-            if mode == 'train':
-                # Clear gradients computed for model parameters
-                assert optimizer is not None
-                optimizer.zero_grad()
+        if 'meta' in self.training_mode:
+            task_embedding = task_embeddings(task_id)
 
         logits = self.model(src_tokens, task_embedding.data if 'meta' in self.training_mode else task_embedding)
 
