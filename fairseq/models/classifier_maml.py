@@ -208,7 +208,8 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
         num_tasks=None,
         split_data=False,
         optimizer=None,
-        mode='train'
+        mode='train',
+        epoch_itr=None
     ):
         bs = src_tokens.shape[0]
 
@@ -221,7 +222,7 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
 
         outputs = {}
 
-        if self.training_mode == 'maml_meta':
+        if 'maml_meta' in self.training_mode:
 
             num_tasks = self.task.sample_num_tasks
             num_ex_per_task = bs // num_tasks
@@ -238,31 +239,52 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
                 self.init_z_optimizer.zero_grad()
                 self.inner_opt.zero_grad()
 
-            self.task_embeddings.weight.data.copy_(self.task_embedding_init.weight.data)
-            with higher.innerloop_ctx(
-                self.task_embeddings, self.inner_opt, copy_initial_weights=False
-            ) as (femb, diffopt):
-                for _ in range(self.num_grad_updates):
+            if self.training_mode == 'maml_meta': 
+                self.task_embeddings.weight.data.copy_(self.task_embedding_init.weight.data)
+
+                with higher.innerloop_ctx(
+                    self.task_embeddings, self.inner_opt, copy_initial_weights=False
+                ) as (femb, diffopt):
+                    for _ in range(self.num_grad_updates):
+                        task_embedding = femb(task_id)
+                        logits = self.model(
+                            src_tokens,
+                            task_embedding=task_embedding)
+
+                        loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
+                        diffopt.step(loss)
+
                     task_embedding = femb(task_id)
+                    logits = self.model(
+                        src_tokens,
+                        task_embedding=task_embedding)
+                    loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
+
+                    # Moved to outer loop
+                    # loss.backward()
+                    # meta_grad = self.task_embeddings.weight.grad.sum(0)
+
+                if self.task_embedding_init.weight.grad is None:
+                    self.task_embedding_init.weight.sum().backward() 
+            else:
+
+                self.task_embeddings.weight.data.zero_()
+                self.inner_opt.zero_grad()
+
+                for _ in range(self.num_grad_updates):
+                    task_embedding = self.task_embeddings(task_id)
                     logits = self.model(
                         src_tokens,
                         task_embedding=task_embedding)
 
                     loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
-                    diffopt.step(loss)
+                    self.inner_opt.step(loss)
 
-                task_embedding = femb(task_id)
+                task_embedding = self.task_embeddings(task_id)
                 logits = self.model(
                     src_tokens,
                     task_embedding=task_embedding)
                 loss = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
-
-                # Moved to outer loop
-                # loss.backward()
-                # meta_grad = self.task_embeddings.weight.grad.sum(0)
-
-            if self.task_embedding_init.weight.grad is None:
-                self.task_embedding_init.weight.sum().backward() 
 
             # self.task_embedding_init.weight.grad.data.copy_(meta_grad)
             # if mode == 'train':
