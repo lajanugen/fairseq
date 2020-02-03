@@ -213,7 +213,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         num_tasks=None,
         split_data=False,
         optimizer=None,
-        mode='train'
+        mode='train',
+        epoch_itr=None
     ):
         bs = src_tokens.shape[0]
         task_id = src_tokens[:, 0]

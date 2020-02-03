@@ -5,8 +5,8 @@ import torch
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
-# from fairseq.tasks.task_generator_v2 import TaskGenerator
-from fairseq.tasks.task_generator import TaskGenerator
+from fairseq.tasks.task_generator_v2 import TaskGenerator
+# from fairseq.tasks.task_generator import TaskGenerator
 
 import numpy as np
 from pdb import set_trace as bp
@@ -128,8 +128,9 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.vocab_size,
                 self.num_classes,
                 args.task_descriptions_dir)
-            train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train.txt')
-            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_100.txt')
+            train_task_descriptions = task_generator.load_tasks(args.load_tasks + 'train.txt')
+            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_501.txt')
+            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_1k.txt')
 
             self.train_task_descriptions = train_task_descriptions 
 
@@ -151,7 +152,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 # self.task_embedding_inds = min_max_inds
     
             if self.train_unseen_task:
-                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/test.txt')
+                test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'test.txt')
     
                 test_tasks = task_generator.generate_data(
                     test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
@@ -163,7 +164,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
     
             else:
-                test_task_descriptions = task_generator.load_tasks(args.load_tasks + '/val.txt')
+                test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'val.txt')
 
                 val_task_descriptions = test_task_descriptions[-self.num_test_tasks:]
                 self.val_task_descriptions = val_task_descriptions 
