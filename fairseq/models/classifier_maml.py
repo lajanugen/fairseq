@@ -302,11 +302,8 @@ class FairseqTransformerClassifierMaml(BaseFairseqModel):
         else:
 
             task_embedding = self.task_embedding_init(torch.LongTensor([0]).cuda())
-            # task_embedding = task_embedding.view(-1, task_len, self.task_emb_size)
-            # task_ids_mask = compositional_task_ids.eq(self.unk_index).unsqueeze(-1).float()
 
-            logits = self.model(src_tokens, task_embedding) # , task_ids_mask=task_ids_mask)
-
+            logits = self.model(src_tokens, task_embedding)
             outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss)
 
         outputs['post_accuracy_train'] = compute_accuracy(logits, targets)

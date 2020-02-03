@@ -198,8 +198,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
 
             if task_ids_mask is not None:
                 task_len = task_ids_mask.shape[1]
-                # compositional_embeddings = x[:, -task_len:]
-                compositional_embeddings = x[:, :task_len]
+                compositional_embeddings = x[:, -task_len:]
+                # compositional_embeddings = x[:, :task_len]
                 task_emb_size = task_embedding.shape[-1]
                 if task_emb_size != self.embedding_dim:
                     task_embedding = self.task_emb_project(task_embedding.view(-1, task_emb_size))
@@ -209,8 +209,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     compositional_embeddings = compositional_embeddings.sum(dim=1, keepdim=True)
                     x = torch.cat((compositional_embeddings, x[:, 1:-task_len]), axis=1)
                 else:
-                    # x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
-                    x = torch.cat((compositional_embeddings, x[:, :-task_len]), axis=1)
+                    x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
+                    # x = torch.cat((compositional_embeddings, x[:, :-task_len]), axis=1)
             elif self.task_emb_cond_type == 'token':
                 if task_embedding.shape[0] == 1:
                     bs = x.shape[0]
@@ -230,8 +230,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     task_embedding = self.task_emb_project(task_embedding)
                 task_embedding = task_embedding.unsqueeze(1)
                 if cls_mask is None:
-                    # x = torch.cat((task_embedding, x[:, 1:]), dim=1)
-                    x = torch.cat((task_embedding + x[:, [0]], x[:, 1:]), dim=1)
+                    x = torch.cat((task_embedding, x[:, 1:]), dim=1)
+                    # x = torch.cat((task_embedding + x[:, [0]], x[:, 1:]), dim=1)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)

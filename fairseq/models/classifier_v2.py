@@ -190,7 +190,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.train_unseen_task = task.train_unseen_task
         self.task_emb_cond_type = args.task_emb_cond_type
         self.sample_num_tasks = args.sample_num_tasks
-        self.samples_per_task = args.max_sentences
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
