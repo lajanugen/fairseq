@@ -200,14 +200,14 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         elif 'meta' in self.training_mode:
             # Train
             self.task_embeddings = nn.Embedding(
-                self.sample_num_tasks, self.task_emb_size)
-                # self.num_train_tasks, self.task_emb_size)
+                self.num_train_tasks, self.task_emb_size)
+            #     self.sample_num_tasks, self.task_emb_size)
             self.z_optimizer = optim.Adam(
                 self.task_embeddings.parameters(), lr=self.z_lr)
             # Eval
             self.task_embeddings_eval = nn.Embedding(
-                self.sample_num_tasks, self.task_emb_size)
-                # self.num_test_tasks, self.task_emb_size)
+                self.num_test_tasks, self.task_emb_size)
+            #     self.sample_num_tasks, self.task_emb_size)
             self.z_optimizer_eval = optim.Adam(
                 self.task_embeddings_eval.parameters(), lr=self.z_lr)
 
@@ -250,10 +250,10 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         if num_tasks:
             num_ex_per_task = bs // num_tasks
-            if mode == 'train':
-                task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
+        #     if mode == 'train':
+        #         task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
 
-        assert task_id.shape[0] == bs
+        # assert task_id.shape[0] == bs
 
         if split_data:
             split_ratio = 0.5

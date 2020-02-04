@@ -187,16 +187,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.task_emb_size = args.task_emb_size
         self.log_losses = args.log_losses
         self.z_lr = args.z_lr
-        self.sample_num_tasks = args.sample_num_tasks
 
         if 'meta' in self.training_mode:
             # Train
-            # task_embeddings = nn.Embedding(self.num_train_tasks, self.task_emb_size * args.task_description_len).cuda()
-            task_embeddings = nn.Embedding(self.sample_num_tasks, self.task_emb_size * args.task_description_len).cuda()
+            task_embeddings = nn.Embedding(self.num_train_tasks, self.task_emb_size * args.task_description_len).cuda()
             z_optimizer = optim.Adam(task_embeddings.parameters(), lr=self.z_lr)
             # Eval
-            # task_embeddings_eval = nn.Embedding(self.num_test_tasks, self.task_emb_size * args.task_description_len).cuda()
-            task_embeddings_eval = nn.Embedding(self.sample_num_tasks, self.task_emb_size * args.task_description_len).cuda()
+            task_embeddings_eval = nn.Embedding(self.num_test_tasks, self.task_emb_size * args.task_description_len).cuda()
             z_optimizer_eval = optim.Adam(task_embeddings_eval.parameters(), lr=self.z_lr)
 
             self.task_embeddings = {'train': task_embeddings, 'eval': task_embeddings_eval}
@@ -224,9 +221,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         if num_tasks:
             num_ex_per_task = bs // num_tasks
-            if mode == 'train':
-                task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
-        assert task_id.shape[0] == bs
 
         task_len = self.args.task_description_len
         compositional_task_ids = src_tokens[:, -task_len:]
