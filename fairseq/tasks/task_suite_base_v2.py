@@ -5,8 +5,8 @@ import torch
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
-from fairseq.tasks.task_generator_v2 import TaskGenerator
-# from fairseq.tasks.task_generator import TaskGenerator
+from fairseq.tasks.task_generator_v2 import TaskGenerator as TaskGenv2
+from fairseq.tasks.task_generator import TaskGenerator as TaskGen
 
 import numpy as np
 from pdb import set_trace as bp
@@ -121,6 +121,9 @@ class TaskSuiteBase_v2(FairseqTask):
             self.label_encode[i] = self.input_vocab.add_symbol(label_token)
 
         if load_data:
+            TaskGenerator = TaskGen
+            if self.compositional:
+                TaskGenerator = TaskGenv2
             task_generator = TaskGenerator(
                 self.max_tasks,
                 self.num_train,
@@ -129,7 +132,7 @@ class TaskSuiteBase_v2(FairseqTask):
                 self.num_classes,
                 args.task_descriptions_dir)
             train_task_descriptions = task_generator.load_tasks(args.load_tasks + 'train.txt')
-            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_501.txt')
+            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_100.txt')
             # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_1k.txt')
 
             self.train_task_descriptions = train_task_descriptions 
