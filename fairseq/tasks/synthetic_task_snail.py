@@ -33,6 +33,10 @@ class SyntheticLMTaskSnail(ReviewTask):
                             help='Maximum sequence length')
         parser.add_argument('--load_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
                             help='Tasks file.')
+        parser.add_argument('--load_train_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
+                            help='Tasks file.')
+        parser.add_argument('--load_test_tasks_file', default='/checkpoint/llajan/tasks.txt', type=str,
+                            help='Tasks file.')
         parser.add_argument('--load_tasks_file_folder', default='', type=str,
                             help='Tasks file base directory')
         parser.add_argument('--load_from_pickle', action='store_true',
@@ -49,6 +53,10 @@ class SyntheticLMTaskSnail(ReviewTask):
                             help='Num test examples')
         parser.add_argument('--sample_num_tasks', default=1, type=int,
                             help='Num of tasks to sample for each iteration')
+        parser.add_argument('--compositional', action='store_true',
+                            help='Compositional task defn.')
+        parser.add_argument('--load_tasks', default='/tmp', type=str,
+                            help='Tasks file.')
 
 
     @classmethod
@@ -72,84 +80,189 @@ class SyntheticLMTaskSnail(ReviewTask):
         self.num_test_tasks = args.num_test_tasks
         self.sample_num_tasks = args.sample_num_tasks
         self.load_from_pickle = args.load_from_pickle
+        self.compositional = args.compositional
 
-        if self.load_from_pickle:
-            full_data = []
-            filelist = args.load_tasks_file.split(',')
-            for file in filelist:
-                f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
-                data = pickle.load(f)
-                f.close()
+        if load_data:
 
-                full_data.extend(data['data'])
+            if self.load_from_pickle:
 
-            assert len(full_data) >= self.num_train_tasks + 2 * self.num_test_tasks
-           
-            train_tasks = []
-            for task_data in full_data[:self.num_train_tasks]:
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
+                if self.compositional:
+                    f = open(args.load_train_tasks_file, 'rb')
+                    data = pickle.load(f)
+                    f.close()
+                    
+                    assert len(data) >= self.num_train_tasks+self.num_test_tasks
+                    data = data[:self.num_train_tasks+self.num_test_tasks]
+                    
+                    train_tasks = []
+                    self.train_task_ids = []
+                    for dat in data[:-self.num_test_tasks]:
+                        self.train_task_ids.append(dat[1])
+    
+                        assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                        train = dat[0][:self.num_train]
+                        val = dat[0][self.num_train:self.num_train+self.num_test]
+                        test = dat[0][-self.num_test:]
+                    
+                        train_tasks.append((train, val, test))
+
+                    self.train_task_descriptions = self.train_task_ids
+    
+                    val_tasks = []
+                    self.val_task_ids = []
+                    for dat in data[-self.num_test_tasks:]:
+                        self.val_task_ids.append(dat[1])
+    
+                        assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                        train = dat[0][:self.num_train]
+                        val = dat[0][self.num_train:self.num_train+self.num_test]
+                        test = dat[0][-self.num_test:]
+                    
+                        val_tasks.append((train, val, test))
+
+                    self.val_task_descriptions = self.val_task_ids
+
+                    f = open(args.load_test_tasks_file, 'rb')
+                    data = pickle.load(f)
+                    f.close()
+
+                    test_tasks = []
+                    self.test_task_ids = []
+                    for dat in data:
+                        self.test_task_ids.append(dat[1])
+    
+                        assert len(dat[0]) >= self.num_train + 2 * self.num_test
+                        train = dat[0][:self.num_train]
+                        val = dat[0][self.num_train:self.num_train+self.num_test]
+                        test = dat[0][-self.num_test:]
+                    
+                        test_tasks.append((train, val, test))
+                    self.test_task_descriptions = self.test_task_ids
+
+                    for task in self.train_task_descriptions:
+                        for component in task:
+                            self.vocab.add_symbol('t' + str(component))
+
+                else:
+
+                    # full_data = []
+                    # filelist = args.load_tasks_file.split(',')
+                    # for file in filelist:
+                    #     f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
+                    #         data = pickle.load(f)
+                    #         f.close()
+    
+                    #         full_data.extend(data['data'])
+    
+                    #     assert len(full_data) >= self.num_train_tasks + 2 * self.num_test_tasks
+   
+                    #     test_tasks = []
+                    #     # for task_data in full_data[-self.num_test_tasks:]:
+                    #     for task_data in full_data[-2*self.num_test_tasks:-self.num_test_tasks]:
+                    #         train = task_data[:self.num_train]
+                    #         val = task_data[self.num_train:self.num_train+self.num_test]
+                    #         test = task_data[-self.num_test:]
+                    #         
+                    #         test_tasks.append((train, val, test))
+
+                    full_data = []
+                    filelist = args.load_tasks_file.split(',')
+                    for file in filelist:
+                        f = open(os.path.join(args.load_tasks_file_folder, file), 'rb')
+                        data = pickle.load(f)
+                        f.close()
+    
+                        full_data.extend(data['data'])
+    
+                    assert len(full_data) >= self.num_train_tasks + 2 * self.num_test_tasks
+               
+                    train_tasks = []
+                    for task_data in full_data[:self.num_train_tasks]:
+                        train = task_data[:self.num_train]
+                        val = task_data[self.num_train:self.num_train+self.num_test]
+                        test = task_data[-self.num_test:]
+                        
+                        train_tasks.append((train, val, test))
+    
+                    val_tasks = []
+                    for task_data in full_data[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]:
+                        train = task_data[:self.num_train]
+                        val = task_data[self.num_train:self.num_train+self.num_test]
+                        test = task_data[-self.num_test:]
+                        
+                        val_tasks.append((train, val, test))
+    
+                    test_tasks = []
+                    for task_data in full_data[-self.num_test_tasks:]:
+                        train = task_data[:self.num_train]
+                        val = task_data[self.num_train:self.num_train+self.num_test]
+                        test = task_data[-self.num_test:]
+                        
+                        test_tasks.append((train, val, test))
+
+                    self.train_task_descriptions = list(range(len(train_tasks)))
+                    self.val_task_descriptions = list(range(len(val_tasks)))
+                    self.test_task_descriptions = list(range(len(test_tasks)))
+            else:
+                task_generator = TaskGenerator(
+                    self.max_tasks,
+                    self.max_seq_len,
+                    self.vocab_size)
+                train_task_descriptions = task_generator.load_tasks(args.load_tasks + 'train.txt')
+                self.train_task_descriptions = train_task_descriptions 
+
+                if self.compositional:
+                    for task in self.train_task_descriptions:
+                        for component in task.split('->'):
+                            self.vocab.add_symbol(component)
+
+                # task_descriptions = task_generator.load_tasks(args.load_tasks_file)
+    
+                # assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
+     
+                # train_task_descriptions = task_descriptions[:self.num_train_tasks]
+                # val_task_descriptions = task_descriptions[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]
+                # test_task_descriptions = task_descriptions[-self.num_test_tasks:]
+    
+                print('Generating data...')
                 
-                train_tasks.append((train, val, test))
-
-            val_tasks = []
-            for task_data in full_data[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]:
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
-                
-                val_tasks.append((train, val, test))
-
-            test_tasks = []
-            for task_data in full_data[-self.num_test_tasks:]:
-                train = task_data[:self.num_train]
-                val = task_data[self.num_train:self.num_train+self.num_test]
-                test = task_data[-self.num_test:]
-                
-                test_tasks.append((train, val, test))
-        else:
-            task_generator = TaskGenerator(
-                self.max_tasks,
-                self.max_seq_len,
-                self.vocab_size)
-            task_descriptions = task_generator.load_tasks(args.load_tasks_file)
-
-            assert len(task_descriptions) >= self.num_train_tasks + 2 * self.num_test_tasks
- 
-            train_task_descriptions = task_descriptions[:self.num_train_tasks]
-            val_task_descriptions = task_descriptions[self.num_train_tasks : self.num_train_tasks + self.num_test_tasks]
-            test_task_descriptions = task_descriptions[-self.num_test_tasks:]
-
-            print('Generating data...')
-            
-            if load_data:
                 if self.train_unseen_task:
+                    test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'test.txt')
                     test_tasks = task_generator.generate_data(
                         test_task_descriptions, self.num_train, self.num_test)
+                    self.test_task_descriptions = test_task_descriptions
                 else:
+                    # test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'val.txt')
+                    test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'test.txt')
+                    val_task_descriptions = train_task_descriptions[-self.num_test_tasks:]
+                    self.val_task_descriptions = val_task_descriptions 
+
                     train_tasks = task_generator.generate_data(
                         train_task_descriptions, self.num_train, self.num_test)
                     val_tasks = task_generator.generate_data(
                         val_task_descriptions, self.num_train, self.num_test)
-            
-            print('Done Generating data.')
 
-        if load_data:
+                    self.val_task_descriptions = val_task_descriptions
+                
+                print('Done Generating data.')
+    
             if self.train_unseen_task:
                 train_examples = [task[0] for task in test_tasks]
                 val_examples = [task[1] for task in test_tasks]
                 test_examples = [task[2] for task in test_tasks]
-
+    
                 self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
-
+    
             else:
                 train_examples = [task[0] for task in train_tasks]
                 val_examples = [task[0] for task in val_tasks]
-
+    
                 self.examples = {'train': train_examples, 'valid': val_examples}
 
-    def construct_data(self, task_id, examples, append_task_id=True):
+
+            # self.test_task_descriptions = test_task_descriptions 
+
+    def construct_data(self, task_id, examples, task_description=None, append_task_id=True):
 
         input_sentences, output_sentences, src_lengths, tgt_lengths = [], [], [], []
 
@@ -186,9 +299,23 @@ class SyntheticLMTaskSnail(ReviewTask):
                 input_sequence = input_sequence[:self.max_seq_len]
                 output_sequence = output_sequence[:self.max_seq_len]
 
+            if self.compositional:
+                if self.load_from_pickle:
+                    task_desc = ['t' + str(word) for word in task_description]
+                else:
+                    task_desc = task_description.split('->')
+                # task_desc_enc = [self.vocab.index('t' + str(word)) for word in task_description]
+                task_desc_enc = [self.vocab.index(t) for t in task_desc]
+                # input_sequence = [task_id] + task_desc_enc + input_sequence 
+                input_sequence = task_desc_enc + input_sequence 
+                # output_sequence = [self.vocab.pad()]*len(task_desc_enc) + output_sequence
+            else:
+                if append_task_id:
+                    input_sequence = [task_id] + input_sequence
+                # output_sequence = [self.vocab.pad()] + output_sequence
+           
             # prepend task_id
-            if append_task_id:
-                input_sequence = [task_id] + input_sequence
+            #     input_sequence = [task_id] + input_sequence
             # output_sequence = [task_id] + output_sequence
            
             input_sentences.append(torch.LongTensor(input_sequence))
@@ -203,9 +330,13 @@ class SyntheticLMTaskSnail(ReviewTask):
         if self.train_unseen_task:
             assert self.eval_task_id < self.num_test_tasks
 
-            input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(self.eval_task_id, self.examples[split][self.eval_task_id], append_task_id=False)
+            task_descriptions = self.test_task_descriptions
+            input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(
+                self.eval_task_id, self.examples[split][self.eval_task_id], task_descriptions[self.eval_task_id], append_task_id=False)
+
             if split == 'valid':
-                train_input_sentences, train_output_sentences, train_src_lengths, train_tgt_lengths = self.construct_data(self.eval_task_id, self.examples['train'][self.eval_task_id], append_task_id=False)
+                train_input_sentences, train_output_sentences, train_src_lengths, train_tgt_lengths = self.construct_data(
+                    self.eval_task_id, self.examples['train'][self.eval_task_id], task_descriptions[self.eval_task_id], append_task_id=False)
                 train_input_sentences = torch.cat(train_input_sentences)
                 train_output_sentences = torch.cat(train_output_sentences)
                 train_output_sentences.fill_(self.vocab.pad())
@@ -214,6 +345,7 @@ class SyntheticLMTaskSnail(ReviewTask):
                     output_sentences[i] = torch.cat([train_output_sentences, output_sentences[i]])
                     src_lengths[i] += train_input_sentences.shape[0]
                     tgt_lengths[i] += train_output_sentences.shape[0]
+
 
             self.datasets[split] = LanguagePairDataset(
                 src=input_sentences,
@@ -231,9 +363,14 @@ class SyntheticLMTaskSnail(ReviewTask):
             dataset_map = OrderedDict()
             split_examples = self.examples[split]
             num_tasks = len(split_examples)
+            if split == 'valid':
+                task_descriptions = self.val_task_descriptions
+            else:
+                task_descriptions = self.train_task_descriptions
 
             for task_id in range(num_tasks):
-                input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(task_id, split_examples[task_id])
+                input_sentences, output_sentences, src_lengths, tgt_lengths = self.construct_data(
+                    task_id, split_examples[task_id], task_descriptions[task_id], append_task_id=False)
 
                 dataset_map[task_id] = LanguagePairDataset(
                     src=input_sentences,

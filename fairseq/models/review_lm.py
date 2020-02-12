@@ -135,9 +135,9 @@ class LMClassifier(nn.Module):
 
        output = output[-1].transpose(0, 1)
 
-       if task_embedding is not None:
-         # Ignore task embedding time-step
-         output = output[:, 1:]
+       # if task_embedding is not None:
+       #   # Ignore task embedding time-step
+       #   output = output[:, 1:]
        rep_size = output.shape[-1]
        output = output.contiguous().view(-1, rep_size)
 
@@ -336,10 +336,11 @@ class FairseqReviewLM(BaseFairseqModel):
             else:
                 task_embeddings = self.task_embeddings
 
-        if self.training_mode == 'task_agnostic' or self.training_mode == 'maml':
-            attn_mask = subsequent_mask(targets.shape[1])
-        else:
-            attn_mask = subsequent_mask(targets.shape[1] + 1)
+        attn_mask = subsequent_mask(targets.shape[1])
+        # if self.training_mode == 'task_agnostic' or self.training_mode == 'maml':
+        #     attn_mask = subsequent_mask(targets.shape[1])
+        # else:
+        #     attn_mask = subsequent_mask(targets.shape[1] + 1)
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
@@ -347,7 +348,6 @@ class FairseqReviewLM(BaseFairseqModel):
         elif self.training_mode == 'single_task' or self.training_mode == 'maml_z':
             task_embedding = self.task_embedding_init
         else:
-            assert self.training_mode == 'task_agnostic'
             task_embedding = None
 
         if 'meta' in self.training_mode:
@@ -376,7 +376,6 @@ class FairseqReviewLM(BaseFairseqModel):
                     task_embedding=task_embedding)
 
                 loss = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
-                losses.append(loss.item())
 
                 loss.backward()
                 z_optimizer.step()
@@ -388,25 +387,6 @@ class FairseqReviewLM(BaseFairseqModel):
                     outputs['pre_loss_train'] = compute_loss(logits, targets, mask=train_mask, loss_mask=loss_mask)
                     if split_data:
                         outputs['pre_loss_test'] = compute_loss(logits, targets, mask=test_mask, loss_mask=loss_mask)
-
-                    prev_loss = loss.item()
-                else:
-                    cur_loss = loss.item()
-
-                    if cur_loss > prev_loss:
-                        step_size /= 2
-                        set_learning_rate(z_optimizer, step_size)
-                        if step_size < 1e-6:
-                            break
-
-                    prev_loss = cur_loss
-
-            outputs['num_grad_updates'] = 1.0 * num_grad_updates
-            if self.log_losses:
-                if np.random.uniform() > 0.99:
-                    with open(self.log_losses, 'a') as f:
-                        losses_str = '%s\n' % ' '.join(map(str, losses))
-                        f.write(losses_str)
 
         elif self.training_mode == 'maml' and mode == 'train':
             step_size = self.z_lr
@@ -435,6 +415,8 @@ class FairseqReviewLM(BaseFairseqModel):
                 loss /= self.sample_num_tasks
                 loss.backward()
 
+        if 'meta' in self.training_mode:
+            task_embedding = task_embeddings(task_id)
 
         logits = self.model(
             src_tokens,

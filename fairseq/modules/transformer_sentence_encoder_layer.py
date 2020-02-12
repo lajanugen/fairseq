@@ -81,7 +81,6 @@ class TransformerSentenceEncoderLayer(nn.Module):
             key_padding_mask=self_attn_padding_mask,
             need_weights=False,
             attn_mask=self_attn_mask,
-            task_emb=task_emb
         )
         x = F.dropout(x, p=self.dropout, training=self.training)
         x = residual + x

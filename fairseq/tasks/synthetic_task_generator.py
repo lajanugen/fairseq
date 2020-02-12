@@ -22,16 +22,24 @@ class TaskGenerator():
         transforms = []
         muls = []
         adds = []
-        for k in [3, 5, 7]:
+        for k in [2, 3, 5, 7, 9, 10, 11]:
             muls.append(('mul', k))
-            transforms.extend(muls)
-        for k in [1, 3, 5]:
+        transforms.extend(muls)
+        for k in range(self.vocab_size):
             adds.append(('add', k))
-            transforms.extend(adds)
+        transforms.extend(adds)
         for k in [2, 3]:
             transforms.append(('div', k))
-        for k in [5, 6, 7]:
+        for k in [5, 6, 7, 8, 9, 10, 11]:
             transforms.append(('mod', k))
+
+#        for k in range(1, self.vocab_size + 1):
+#            muls.append(('mul', k))
+#            adds.append(('add', k))
+#            transforms.append(('div', k))
+#            transforms.append(('mod', k))
+#        transforms.extend(muls)
+#        transforms.extend(adds)
 
         subseq = []
 
@@ -67,12 +75,23 @@ class TaskGenerator():
                 reorder.append(('swap', i, j))
 
         for i in range(self.seqlen - 1):
-            reorder.append(('shift', i))
+            reorder.append(('shift', i + 1))
 
         self.transforms = transforms
         self.subseq = subseq
         self.reorder = reorder
 
+        self.transforms_taskid = {}
+        self.subseq_taskid = {}
+        self.reorder_taskid = {}
+
+        for i in range(len(transforms)):
+            self.transforms_taskid[' '.join(map(str, transforms[i]))] = i
+        for i in range(len(subseq)):
+            self.subseq_taskid[' '.join(map(str, subseq[i]))] = i + len(transforms)
+        for i in range(len(reorder)):
+            self.reorder_taskid[' '.join(map(str, reorder[i]))] = i + len(transforms) + len(subseq)
+        
 
     def generate_tasks(self):
 
@@ -109,12 +128,48 @@ class TaskGenerator():
         return list(tasks_explored)
 
 
+    def generate_all_tasks(self):
+        rng = np.random.RandomState(seed=1234)
+
+        tasks_iter = 0
+        tasks_explored = []
+        for transform, subseq, reorder in itertools.product(self.transforms, self.subseq, self.reorder):
+            print(tasks_iter)
+            tasks_iter += 1
+
+            task_description = self.task_description(transform, subseq, reorder)
+            
+            data = self.generate_data_single_task(task_description, 100, rng)  # test that the task makes sense
+            if len(data) == 0:
+                print('bad task: %s' % task_description)
+                continue
+
+            tasks_explored.append(task_description)
+
+        if self.logdir is not None:
+            with open(self.logdir, 'w') as f:
+                f.write('\n'.join(tasks_explored))
+
+        return tasks_explored
+
+
     def task_description(self, transform, subseq, reorder):
         transform = map(str, transform)
         subseq = map(str, subseq)
         reorder = map(str, reorder)
 
         return ' -> '.join([' '.join(transform), ' '.join(subseq), ' '.join(reorder)])
+
+
+    def get_task_ids(self, task_description):
+        subtasks = task_description.split(' -> ')
+
+        assert subtasks[0] in self.transforms_taskid
+        assert subtasks[1] in self.subseq_taskid
+        assert subtasks[2] in self.reorder_taskid
+
+        return (self.transforms_taskid[subtasks[0]], self.subseq_taskid[subtasks[1]], self.reorder_taskid[subtasks[2]])
+
 
     def load_tasks(self, tasks_file):
         with open(tasks_file, 'r') as f:
@@ -146,9 +201,22 @@ class TaskGenerator():
 
         return all_data
 
+    def generate_data_same_input(self, tasks, num_examples=100):
 
-    def generate_data_single_task(self, task, num_examples, rng, allow_fail=True):
+        all_data = []
 
+        for task in tasks:
+            rng = np.random.RandomState(seed=1234)
+            data = self.generate_data_single_task_v2(task, num_examples, rng)
+            assert len(data) == num_examples
+            outputs = [' '.join(map(str, x[1])) for x in data]
+            outputs = 'd'.join(outputs)
+
+            all_data.append(outputs)
+
+        return all_data
+
+    def parse_task(self, task):
         transform, subseq, reorder = task.split(' -> ')
         transform = transform.split()
         transform[1] = int(transform[1])
@@ -168,6 +236,26 @@ class TaskGenerator():
             for i in range(1, len(reorder)):
                 reorder[i] = int(reorder[i])
 
+        return transform, subseq, reorder
+
+
+    def generate_output(self, transform, subseq, reorder, in_seq):
+        x_tf = self.fn_map[transform[0]](in_seq, transform[1])
+        if len(x_tf) != len(in_seq):
+            return []
+
+        x_subseq = self.fn_map[subseq[0]](x_tf, subseq[1:])
+        if len(x_subseq) != len(in_seq):
+            return []
+
+        x_final = self.fn_map[reorder[0]](x_subseq, reorder)
+
+        return x_final
+
+
+    def generate_data_single_task(self, task, num_examples, rng, allow_fail=True):
+        transform, subseq, reorder = self.parse_task(task)
+
         input_strings = set()
         data = []
         fail_count = 0
@@ -182,14 +270,8 @@ class TaskGenerator():
                 continue
             input_strings.add(x_str)
 
-            x_tf = self.fn_map[transform[0]](x, transform[1])
+            x_final = self.generate_output(transform, subseq, reorder, x)
 
-            x_subseq = self.fn_map[subseq[0]](x_tf, subseq[1:])
-            if len(x_subseq) != len(x):
-                fail_count += 1
-                continue
-
-            x_final = self.fn_map[reorder[0]](x_subseq, reorder)
             if len(x_final) != len(x):
                 fail_count += 1
                 continue
@@ -201,6 +283,20 @@ class TaskGenerator():
 
         return data
 
+
+    def generate_data_single_task_v2(self, task, num_examples, rng):
+        transform, subseq, reorder = self.parse_task(task)
+
+        data = []
+        while True:
+            x = list(rng.randint(self.vocab_size, size=(self.seqlen,)))
+            x_final = self.generate_output(transform, subseq, reorder, x)
+            data.append((x, x_final))
+
+            if len(data) == num_examples:
+                break
+
+        return data
 
     def function_mapping(self):
 
@@ -276,4 +372,3 @@ class TaskGenerator():
         }
 
         return fn_map
-

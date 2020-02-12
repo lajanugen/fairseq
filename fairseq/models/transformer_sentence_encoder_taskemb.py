@@ -5,6 +5,7 @@
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
 
+from pdb import set_trace as bp
 from typing import Tuple, Optional
 
 import torch
@@ -172,6 +173,7 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         last_state_only: bool = False,
         positions: Optional[torch.Tensor] = None,
         self_attn_mask: torch.Tensor = None,
+        task_ids_mask: torch.Tensor = None,
         cls_mask: torch.Tensor = None,
         input_embeddings: torch.Tensor = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -191,12 +193,28 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
             if len(list(task_embedding.shape)) == 1:
                 task_embedding = task_embedding.unsqueeze(0)
 
-            if task_embedding.shape[0] == 1:
-                bs = x.shape[0]
-                task_embedding = task_embedding.expand(bs, -1)
-            if self.task_emb_size != self.embedding_dim:
-                task_embedding = self.task_emb_project(task_embedding)
-            task_embedding = task_embedding.unsqueeze(1)
+            if task_ids_mask is not None:
+                task_len = task_ids_mask.shape[1]
+                # compositional_embeddings = x[:, -task_len:]
+                compositional_embeddings = x[:, :task_len]
+                task_emb_size = task_embedding.shape[-1]
+                # if task_emb_size != self.embedding_dim:
+                #     task_embedding = self.task_emb_project(task_embedding.view(-1, task_emb_size))
+                #     task_embedding = task_embedding.view(-1, task_len, self.embedding_dim)
+                compositional_embeddings = compositional_embeddings * (1 - task_ids_mask) + task_embedding * task_ids_mask
+                if self.task_emb_cond_type == 'cls_token':
+                    compositional_embeddings = compositional_embeddings.sum(dim=1, keepdim=True)
+                    x = torch.cat((compositional_embeddings, x[:, 1:-task_len]), axis=1)
+                else:
+                    # x = torch.cat((x[:, :-task_len], compositional_embeddings), axis=1)
+                    x = torch.cat((compositional_embeddings, x[:, task_len:]), axis=1)
+            elif self.task_emb_cond_type == 'token':
+                if task_embedding.shape[0] == 1:
+                    bs = x.shape[0]
+                    task_embedding = task_embedding.expand(bs, -1)
+                if self.task_emb_size != self.embedding_dim:
+                    task_embedding = self.task_emb_project(task_embedding)
+                task_embedding = task_embedding.unsqueeze(1)
 
         if segment_labels is None:
             segment_labels = torch.zeros_like(tokens)

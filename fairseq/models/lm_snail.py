@@ -254,6 +254,7 @@ class FairseqReviewLM(BaseFairseqModel):
         dictionary = task.vocab
         self.padding_idx = dictionary.pad()
         self.vocab_size = dictionary.__len__()
+        self.unk_index = dictionary.unk_index
         self.max_tasks = task.max_tasks
         self.encoder_type = args.encoder_type
         self.encoder_embed_dim = args.encoder_embed_dim
@@ -318,10 +319,15 @@ class FairseqReviewLM(BaseFairseqModel):
 
         bs = src_tokens.shape[0]
 
+        if self.task.compositional:
+            src_tokens = src_tokens.view(-1, self.max_seq_len + 3)
+            task_id = src_tokens[:, :3]
+            src_tokens = src_tokens[:, 3:].contiguous()
+
         if not self.task.train_unseen_task:
 
-            task_id = src_tokens[:, 0]
-            src_tokens = src_tokens[:, 1:]
+            # task_id = src_tokens[:, 0]
+            # src_tokens = src_tokens[:, 1:]
 
             num_tasks = self.sample_num_tasks
 
@@ -336,27 +342,51 @@ class FairseqReviewLM(BaseFairseqModel):
             targets = targets[:, random_example_order]
     
             split_seq_len = self.meta_num_ex
+            if split_seq_len > num_ex_per_task:
+                split_seq_len = num_ex_per_task
+
             d = num_ex_per_task // split_seq_len
             num_ex_per_task = d * split_seq_len
     
             src_tokens = src_tokens[:, :num_ex_per_task].contiguous()
             targets = targets[:, :num_ex_per_task].contiguous()
-    
+
+   
             bs = num_tasks * num_ex_per_task
             new_bs = bs // split_seq_len
-            src_tokens = src_tokens.view(new_bs, -1)
             seq_len = targets.shape[-1]
             targets = targets.view(-1, split_seq_len, seq_len)
             targets[:, :-1].fill_(self.task.vocab.pad())
+
+            src_tokens = src_tokens.view(new_bs, -1)
             targets = targets.view(new_bs, -1)
 
             src_tokens = src_tokens[:, :-1]
             targets = targets[:, 1:]
 
+            if self.task.compositional:
+                task_id = task_id.view(num_tasks, -1, 3)
+                task_id = task_id[:, random_example_order]
+                task_id = task_id[:, :num_ex_per_task].contiguous()
+                task_id = task_id.view(new_bs, -1)[:, :3]
+                task_ids_mask_inds = (3 * torch.rand(new_bs, 1)).long()
+                task_ids_mask = torch.zeros(new_bs, 3).scatter(1, task_ids_mask_inds, 1).long().cuda()
+                task_id = task_id * (1 - task_ids_mask) + self.unk_index * task_ids_mask
+                assert task_id.shape[0] == src_tokens.shape[0]
+
+                src_tokens = torch.cat((task_id, src_tokens), 1)
+                targets = torch.cat((torch.ones(new_bs, 3).long().cuda(), targets), 1)
+ 
             outputs['sample_size'] = targets.ne(self.task.vocab.pad()).sum().item()
         else:
+            if self.task.compositional:
+                src_tokens = src_tokens.view(bs, -1)
             src_tokens = src_tokens[:, :-1]
             targets = targets[:, 1:]
+            if self.task.compositional:
+                task_id = task_id[:bs]
+                src_tokens = torch.cat((task_id, src_tokens), 1)
+                targets = torch.cat((torch.ones(bs, 3).long().cuda(), targets), 1)
 
         pad_mask = targets.eq(self.task.vocab.pad())
         loss_mask = 1 - pad_mask.float()
