@@ -1,41 +1,18 @@
 from collections import OrderedDict
 from scipy import stats
 import torch
+import fairseq.tasks.loader as loader
 
 from fairseq.data import Dictionary, LanguagePairDataset
 from fairseq.data.multi_corpus_sampled_dataset import MultiCorpusSampledDataset
 from fairseq.tasks import FairseqTask, register_task
-# from fairseq.tasks.task_generator_v2 import TaskGenerator as TaskGenv2
-from fairseq.tasks.task_generator import TaskGenerator as TaskGen
 
 import numpy as np
 from pdb import set_trace as bp
 
-class Dictionary_toy(Dictionary):
-    def __init__(self, no_special_tokens=False):
-        super().__init__()
-        if no_special_tokens:
-            self.symbols = []
-            self.count = []
-            self.indices = {}
-            self.nspecial = 0
 
-    @classmethod
-    def load_list(cls, load_list):
-        d = cls()
-        for word in load_list:
-            d.indices[word] = len(d.symbols)
-            d.symbols.append(word)
-            d.count.append(1)
-        return d
-
-    def encode(self, line):
-        line_encode = [self.index(word) for word in line]
-        return line_encode
-
-
-@register_task('task_suite_v2')
-class TaskSuiteBase_v2(FairseqTask):
+@register_task('task_textcls')
+class Tasktextcls(FairseqTask):
 
     @staticmethod
     def add_args(parser):
@@ -73,6 +50,51 @@ class TaskSuiteBase_v2(FairseqTask):
                             help='No fine-tuning.')
         parser.add_argument('--compositional', action='store_true',
                             help='Compositional task defn.')
+        # data configuration
+        parser.add_argument("--data_path", type=str,
+                            default="/home/llajan/Distributional-Signatures/data",
+                            help="path to dataset")
+        parser.add_argument("--dataset", type=str, default="amazon",
+                            help="name of the dataset. "
+                            "Options: [20newsgroup, amazon, huffpost, "
+                            "reuters, rcv1, fewrel]")
+        parser.add_argument("--n_train_class", type=int, default=10,
+                            help="number of meta-train classes")
+        parser.add_argument("--n_val_class", type=int, default=5,
+                            help="number of meta-val classes")
+        parser.add_argument("--n_test_class", type=int, default=9,
+                            help="number of meta-test classes")
+    
+        # model options
+        parser.add_argument("--embedding", type=str, default="avg",
+                            help=("document embedding method. Options: "
+                                  "[avg, tfidf, meta, oracle, cnn]"))
+        parser.add_argument("--classifier", type=str, default="nn",
+                            help=("classifier. Options: [nn, proto, r2d2, mlp]"))
+        parser.add_argument("--auxiliary", type=str, nargs="*", default=[],
+                            help=("auxiliary embeddings (used for fewrel). "
+                                  "Options: [pos, ent]"))
+    
+        # base word embedding
+        parser.add_argument("--wv_path", type=str,
+                            default="/mnt/brain6/scratch/llajan/",
+                            help="path to word vector cache")
+        parser.add_argument("--word_vector", type=str, default="wiki.en.vec",
+                            help=("Name of pretrained word embeddings."))
+        parser.add_argument("--finetune_ebd", action="store_true", default=False,
+                            help=("Finetune embedding during meta-training"))
+    
+        parser.add_argument("--mode", type=str, default="train",
+                            help=("Running mode."
+                                  "Options: [train, test, finetune]"
+                                  "[Default: test]"))
+        parser.add_argument("--bert", default=False, action="store_true",
+                            help=("set true if use bert embeddings "
+                                  "(only available for sent-level datasets: "
+                                  "huffpost, fewrel"))
+        parser.add_argument("--meta_w_target", action="store_true", default=False,
+                            help="use target importance score")
+
 
     @classmethod
     def setup_task(cls, args, load_data=True, **kwargs):
@@ -80,7 +102,7 @@ class TaskSuiteBase_v2(FairseqTask):
         # loading Dictionaries, initializing shared Embedding layers, etc.
         # In this case we'll just load the Dictionaries.
 
-        return TaskSuiteBase_v2(args, load_data)
+        return Tasktextcls(args, load_data)
 
     def __init__(self, args, load_data=True):
         super().__init__(args)
@@ -96,7 +118,7 @@ class TaskSuiteBase_v2(FairseqTask):
         self.eval_task_id = args.eval_task_id
         self.no_training = args.no_training
         self.compositional = args.compositional
-        self.num_classes = 4
+        self.num_classes = 5
 
         self.max_tasks = args.max_tasks
         assert self.num_train_tasks + self.num_test_tasks < self.max_tasks
@@ -104,171 +126,81 @@ class TaskSuiteBase_v2(FairseqTask):
         max_seq_len = self.max_seq_len
         vocab_size = self.vocab_size
 
-        self.input_vocab = Dictionary_toy.load_list(range(vocab_size))
-
-        self.cls_token = 'cls'
-        self.cls_encode = self.input_vocab.add_symbol(self.cls_token)
-
-        output_vocab = Dictionary_toy(no_special_tokens=True).load_list(range(max_seq_len))
-        self.output_vocab = output_vocab
+        self.vocab = Dictionary()
 
         self.label_map = {}
         self.label_encode = {}
         self.output_vocab_size = self.num_classes
-        for i in range(self.num_classes):
-            label_token = 'label%s' % i
-            self.label_map[i] = label_token
-            self.label_encode[i] = self.input_vocab.add_symbol(label_token)
 
-        if load_data:
-            TaskGenerator = TaskGen
-            if self.compositional:
-                TaskGenerator = TaskGenv2
-            task_generator = TaskGenerator(
-                self.max_tasks,
-                self.num_train,
-                self.max_seq_len,
-                self.vocab_size,
-                self.num_classes,
-                args.task_descriptions_dir)
-            train_task_descriptions = task_generator.load_tasks(args.load_tasks + 'train.txt')
-            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_100.txt')
-            # train_task_descriptions = task_generator.load_tasks(args.load_tasks + '/train_1k.txt')
+        train_data, val_data, test_data, vocab = loader.load_dataset(args)
+        if self.train_unseen_task:
+            self.examples = {'train': test_data, 'valid': test_data, 'test': test_data}
+            # self.examples = {'train': train_data, 'valid': val_data, 'test': test_data}
+            # self.examples = {'train': val_data, 'valid': val_data, 'test': test_data}
+        else:
+            self.examples = {'train': train_data, 'valid': val_data, 'test': test_data}
+        self.vocab_init = vocab.vectors
+        self.vocab_size = vocab.vectors.size()[0]
+        self.padding_idx = vocab.stoi['<pad>']
+        self.cls_idx = vocab.stoi['[CLS]']
 
-            self.train_task_descriptions = train_task_descriptions 
+    def construct_data(self, task_id, examples):
 
-            if self.compositional:
-                for task in self.train_task_descriptions:
-                    for component in task.split('->'):
-                        self.input_vocab.add_symbol(component)
-                # primitives = [[], [], []]
-                # min_max_inds = []
-                # for task in self.train_task_descriptions:
-                #     components = task.split('->')
-                #     for i in range(3):
-                #         primitives[i].append(components[i])
-                # for i in range(3):
-                #     indices = []
-                #     for x in primitives[i]:
-                #         indices.append(self.input_vocab.add_symbol(x))
-                #     min_max_inds.append((np.min(indices), np.max(indices)))
-                # self.task_embedding_inds = min_max_inds
-    
-            if self.train_unseen_task:
-                test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'test.txt')
-    
-                test_tasks = task_generator.generate_data(
-                    test_task_descriptions, self.num_train, self.num_test, uniform_classes=True)
-    
-                train_examples = [task[0] for task in test_tasks]
-                val_examples = [task[1] for task in test_tasks]
-                test_examples = [task[2] for task in test_tasks]
-    
-                self.examples = {'train': train_examples, 'valid': val_examples, 'test': test_examples}
-    
-            else:
-                test_task_descriptions = task_generator.load_tasks(args.load_tasks + 'val.txt')
+        # sentences, lengths, labels = [], [], []
 
-                val_task_descriptions = test_task_descriptions[-self.num_test_tasks:]
-                self.val_task_descriptions = val_task_descriptions 
-    
-                print('Generating data...')
-                train_tasks = task_generator.generate_data(
-                    train_task_descriptions, self.num_train, self.num_test)
-                val_tasks = task_generator.generate_data(
-                    val_task_descriptions, self.num_train, self.num_test)
-                print('Done Generating data.')
-    
-                train_examples = [task[0] for task in train_tasks]
-                val_examples = [task[0] for task in val_tasks]
-    
-                self.examples = {'train': train_examples, 'valid': val_examples}
+        text = examples['text']
+        labels = examples['label']
+        lengths = examples['text_len']
 
-            self.test_task_descriptions = test_task_descriptions 
-
-    def construct_data(self, task_id, examples, task_description):
-
-        sentences, lengths, labels = [], [], []
-
-        task_description = task_description.split('->')
-
-        for instance in examples:
-
-            sentence, label = instance
-            sentence = [task_id, self.cls_encode] + self.input_vocab.encode(sentence) 
-            if self.compositional:
-                sentence = sentence + self.input_vocab.encode(task_description)
-            sentences.append(torch.LongTensor(sentence))
-            lengths.append(self.max_seq_len)
-            labels.append(torch.LongTensor([label]))
+        # for i in range(len(text)):
+        #     sentence = text[i][:lengths[i]]
+        #     sentence = np.concatenate((np.array([self.cls_idx]), sentence))
+        #     sentences.append(torch.LongTensor(sentence))
+        #     lengths[i] += 1
+        #     labels.append(torch.LongTensor([label[i]]))
+        
+        # sentences = [torch.LongTensor(sentence) for sentence in text]
+        sentences = [torch.LongTensor(np.concatenate((np.array([self.cls_idx]), sentence))) for sentence in text]
+        labels = [torch.LongTensor([label]) for label in labels]
+        lengths = [length+1 for length in lengths]
+        # lengths = [length+2 for length in lengths]
 
         return sentences, labels, lengths
 
-    def construct_data_train(self, task_id, examples, task_description):
-        return self.construct_data(task_id, examples, task_description)
+    def construct_data_train(self, task_id, examples):
+        return self.construct_data(task_id, examples)
 
-    def construct_data_test(self, task_id, examples, train_examples, split, task_description):
-        return self.construct_data(task_id, examples, task_description)
+    def construct_data_test(self, task_id, examples, train_examples, split):
+        return self.construct_data(task_id, examples)
 
     def load_dataset(self, split, **kwargs):
         """Load a given dataset split (e.g., train, valid, test)."""
 
-        input_vocab = self.input_vocab
-        output_vocab = self.output_vocab
-
         examples = self.examples
 
-        if self.train_unseen_task:
+        dataset_map = OrderedDict()
+        split_examples = examples[split]
+        num_tasks = len(split_examples)
+        keys = list(split_examples.keys())
 
-            task_id = self.eval_task_id
-            # Note: Even though train and test task id's overlap, they index into different tables
-            assert task_id < self.num_test_tasks
+        for i in range(num_tasks):
+            task_id = i
+            sentences, labels, lengths = self.construct_data_train(
+                task_id, split_examples[keys[i]])
 
-            task_descriptions = self.test_task_descriptions
-            sentences, labels, lengths = self.construct_data_test(
-                task_id, examples[split][task_id], examples['train'][task_id], split, task_descriptions[task_id])
-
-            tgt_sizes = [label.shape[0] for label in labels]
-
-            self.datasets[split] = LanguagePairDataset(
+            dataset_map[i] = LanguagePairDataset(
                 src=sentences,
                 src_sizes=lengths,
-                src_dict=input_vocab,
+                src_dict=self.vocab,
                 tgt=labels,
-                tgt_sizes=tgt_sizes,
-                tgt_dict=output_vocab,
+                tgt_sizes=torch.ones(len(labels)),  # targets have length 1
+                tgt_dict=self.vocab,
                 left_pad_source=False,
-                max_target_positions=tgt_sizes[0],
+                max_target_positions=1,
                 input_feeding=False,
             )
-        else:
-            dataset_map = OrderedDict()
-            split_examples = examples[split]
-            num_tasks = len(split_examples)
-
-            if split == 'valid':
-                task_descriptions = self.val_task_descriptions
-            else:
-                task_descriptions = self.train_task_descriptions
-
-            for i in range(num_tasks):
-                task_id = i
-                sentences, labels, lengths = self.construct_data_train(
-                    task_id, split_examples[i], task_descriptions[i])
-
-                dataset_map[i] = LanguagePairDataset(
-                    src=sentences,
-                    src_sizes=lengths,
-                    src_dict=input_vocab,
-                    tgt=labels,
-                    tgt_sizes=torch.ones(len(labels)),  # targets have length 1
-                    tgt_dict=output_vocab,
-                    left_pad_source=False,
-                    max_target_positions=1,
-                    input_feeding=False,
-                )
-            self.datasets[split] = MultiCorpusSampledDataset(
-                dataset_map, num_samples=self.sample_num_tasks)
+        self.datasets[split] = MultiCorpusSampledDataset(
+            dataset_map, num_samples=self.sample_num_tasks)
 
     def max_positions(self):
         """Return the max input length allowed by the task."""
@@ -279,12 +211,12 @@ class TaskSuiteBase_v2(FairseqTask):
     @property
     def source_dictionary(self):
         """Return the source :class:`~fairseq.data.Dictionary`."""
-        return self.input_vocab
+        return self.vocab
 
     @property
     def target_dictionary(self):
         """Return the target :class:`~fairseq.data.Dictionary`."""
-        return self.output_vocab
+        return self.vocab
 
     def _split(self, batch, size, k):
         return batch[k * size: (k + 1) * size]
@@ -348,20 +280,13 @@ class TaskSuiteBase_v2(FairseqTask):
         sample['net_input']['num_tasks'] = self.sample_num_tasks
         sample['net_input']['optimizer'] = optimizer
         sample['net_input']['epoch_itr'] = epoch_itr
-        if self.batch_version:
-            loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
-        else:
-            loss, sample_size, logging_output = self._get_loss_tasks(sample, model, criterion)
+        loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+
         if ignore_grad:
             loss *= 0
 
         if not self.no_training:
             optimizer.backward(loss)
-
-        if model.training_mode == 'maml_meta':
-            meta_grad = model.task_embeddings.weight.grad.sum(0)
-            model.task_embedding_init.weight.grad.data.copy_(meta_grad)
-            model.init_z_optimizer.step()
 
         return loss, sample_size, logging_output
 

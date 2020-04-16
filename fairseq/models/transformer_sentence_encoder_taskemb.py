@@ -93,7 +93,8 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         add_zero_attn: bool = False,
         embed_scale: float = None,
         export: bool = False,
-        task_emb_cond_type: str = 'token'
+        task_emb_cond_type: str = 'token',
+        vocab_init: torch.Tensor = None,
     ) -> None:
 
         super().__init__()
@@ -112,6 +113,9 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         self.embed_tokens = nn.Embedding(
             self.vocab_size, self.embedding_dim, self.padding_idx,
         )
+        if vocab_init is not None:
+            self.embed_tokens.weight.data = vocab_init
+            self.embed_tokens.weight.requires_grad = False
         self.embed_scale = embed_scale
 
         self.segment_embeddings = (
@@ -161,6 +165,9 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         if self.task_emb_size != self.embedding_dim and 'token' in self.task_emb_cond_type:
             self.task_emb_project = nn.Linear(self.task_emb_size, self.embedding_dim)
 
+        if self.task_emb_cond_type == 'token':
+            self.cls_emb = nn.Embedding(1, self.embedding_dim)
+
         # Apply initialization of model params after building the model
         if self.apply_bert_init:
             self.apply(init_bert_params)
@@ -188,10 +195,9 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
         padding_mask = tokens.eq(self.padding_idx)
         if not padding_mask.any():
             padding_mask = None
-        else:
-            print(padding_mask)
-            print('Padding exists')
-
+        # else:
+        #     print(padding_mask)
+        #     print('Padding exists')
         if task_embedding is not None:
             if len(list(task_embedding.shape)) == 1:
                 task_embedding = task_embedding.unsqueeze(0)
@@ -217,9 +223,14 @@ class TransformerSentenceEncoderTaskemb(nn.Module):
                     task_embedding = task_embedding.expand(bs, -1)
                 if self.task_emb_size != self.embedding_dim:
                     task_embedding = self.task_emb_project(task_embedding)
-                x = torch.cat((x, task_embedding.unsqueeze(1)), dim=1)
+                bs = x.shape[0]
+                cls_emb = self.cls_emb(torch.LongTensor([0]).cuda()).expand(bs, -1).unsqueeze(1)
+                # x = torch.cat((x, task_embedding.unsqueeze(1)), dim=1)
+                # x = torch.cat((x[:, [0]], task_embedding.unsqueeze(1), x[:, 2:]), dim=1)
+                x = torch.cat((cls_emb, task_embedding.unsqueeze(1), x[:, 2:]), dim=1)
                 # This is done so that the padding mask is of the right size
-                tokens = torch.cat((tokens, tokens[:, -1:]), dim=1)
+                # tokens = torch.cat((tokens, tokens[:, -1:]), dim=1)
+                # tokens = torch.cat((tokens[:, [0]], tokens), dim=1)
             elif self.task_emb_cond_type == 'input_add':
                 x += task_embedding.unsqueeze(1)
             elif self.task_emb_cond_type == 'cls_token':

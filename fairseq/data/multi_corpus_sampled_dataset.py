@@ -5,6 +5,7 @@
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
 
+from pdb import set_trace as bp
 from collections import OrderedDict
 from typing import Callable, Dict, List
 
@@ -18,6 +19,13 @@ def uniform_sampler(x, n):
     if n <= len(x):
         return np.random.choice(x, n, replace=False)
     return np.random.choice(x, n)
+
+
+def unique_sampler(x, n):
+    # Sample from uniform distribution
+    assert len(x) >= 5
+    assert n % 5 == 0
+    return np.concatenate([np.random.choice(x, 5, replace=False) for _ in range(n // 5)])
 
 
 class MultiCorpusSampledDataset(FairseqDataset):
@@ -42,7 +50,8 @@ class MultiCorpusSampledDataset(FairseqDataset):
         assert isinstance(datasets, OrderedDict)
         self.datasets = datasets
         if sampling_func is None:
-            sampling_func = uniform_sampler
+            # sampling_func = uniform_sampler
+            sampling_func = unique_sampler
         self.sampling_func = sampling_func
 
         self.total_num_instances = 0

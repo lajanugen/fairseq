@@ -28,9 +28,11 @@ class Classifier(nn.Module):
     def __init__(self, args, task):
         super(Classifier, self).__init__()
 
-        dictionary = task.input_vocab
-        self.padding_idx = dictionary.pad()
-        self.vocab_size = dictionary.__len__()
+        # dictionary = task.input_vocab
+        # self.padding_idx = dictionary.pad()
+        # self.vocab_size = dictionary.__len__()
+        self.padding_idx = task.padding_idx
+        self.vocab_size = task.vocab_size
         self.encoder_embed_dim = args.encoder_embed_dim
         self.training_mode = args.training_mode
         self.max_seq_len = task.max_seq_len
@@ -68,7 +70,8 @@ class Classifier(nn.Module):
             add_bias_kv=args.bias_kv,
             add_zero_attn=args.zero_attn,
             task_emb_size=args.task_emb_size,
-            task_emb_cond_type=args.task_emb_cond_type
+            task_emb_cond_type=args.task_emb_cond_type,
+            vocab_init=task.vocab_init
         )
 
         self.classifier = nn.Linear(
