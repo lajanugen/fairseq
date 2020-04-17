@@ -280,7 +280,8 @@ class Tasktextcls(FairseqTask):
         sample['net_input']['num_tasks'] = self.sample_num_tasks
         sample['net_input']['optimizer'] = optimizer
         sample['net_input']['epoch_itr'] = epoch_itr
-        loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+        # loss, sample_size, logging_output = self._get_loss(sample, model, criterion, split_data=True)
+        loss, sample_size, logging_output = self._get_loss(sample, model, criterion)
 
         if ignore_grad:
             loss *= 0

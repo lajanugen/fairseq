@@ -152,6 +152,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                             help='Number of examples in task description.')
         parser.add_argument('--encoder_layers', default=1, type=int,
                             help='Number of encoder layers.')
+        parser.add_argument('--shots', default=5, type=int,
+                            help='Number of shots.')
 
     @classmethod
     def build_model(cls, args, task):
@@ -166,10 +168,13 @@ class FairseqTransformerClassifier(BaseFairseqModel):
     def __init__(self, args, task):
         super(FairseqTransformerClassifier, self).__init__()
 
-        dictionary = task.input_vocab
         self.args = args
-        self.padding_idx = dictionary.pad()
-        self.vocab_size = dictionary.__len__()
+        self.task = task
+        # dictionary = task.input_vocab
+        # self.padding_idx = dictionary.pad()
+        # self.vocab_size = dictionary.__len__()
+        self.padding_idx = task.padding_idx
+        self.vocab_size = task.vocab_size
         self.max_tasks = task.max_tasks
         self.encoder_type = args.encoder_type
         self.encoder_embed_dim = args.encoder_embed_dim
@@ -190,6 +195,7 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.train_unseen_task = task.train_unseen_task
         self.task_emb_cond_type = args.task_emb_cond_type
         self.sample_num_tasks = args.sample_num_tasks
+        self.shots = args.shots
 
         if self.training_mode == 'multitask':
             self.task_embeddings = nn.Embedding(
@@ -201,21 +207,6 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             # Train
             self.task_embeddings = nn.Embedding(
                 self.num_train_tasks, self.task_emb_size)
-            #     self.sample_num_tasks, self.task_emb_size)
-            self.z_optimizer = optim.Adam(
-                self.task_embeddings.parameters(), lr=self.z_lr)
-            # Eval
-            self.task_embeddings_eval = nn.Embedding(
-                self.num_test_tasks, self.task_emb_size)
-            #     self.sample_num_tasks, self.task_emb_size)
-            self.z_optimizer_eval = optim.Adam(
-                self.task_embeddings_eval.parameters(), lr=self.z_lr)
-
-            if 'v4' in self.training_mode:
-                self.task_embedding_init = nn.Embedding(1, self.task_emb_size)
-                self.task_embedding_init.weight.data.zero_()
-                self.zinit_optimizer = optim.Adam(
-                    self.task_embedding_init.parameters(), lr=1e-3)
 
         elif self.training_mode == 'single_task':
             self.task_embedding_init = nn.Parameter(torch.randn(self.task_emb_size))
@@ -226,12 +217,21 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         self.model = Classifier(args, task)
         self.model_parameters = self.model.parameters()
 
+        # if self.train_unseen_task:
+        #     for param in self.model.parameters():
+        #         param.requires_grad = False
+        # self.task_embeddings.weight.requires_grad = True
+
         if self.task_emb_cond_type == 'norm':
             self.task_emb_init_tensor = torch.cat([
                 torch.ones(2 * args.encoder_layers, self.encoder_embed_dim),
                 torch.zeros(2 * args.encoder_layers, self.encoder_embed_dim)],
                 dim=-1
             ).contiguous().view(-1)
+
+        self.oracle_performance = []
+        self.performance = []
+        self.performance_train = []
 
     def forward(
         self,
@@ -245,36 +245,48 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         mode='train',
         epoch_itr=None
     ):
+
         bs = src_tokens.shape[0]
-        task_id = src_tokens[:, 0]
+        # task_id = src_tokens[:, 0]
 
         if num_tasks:
             num_ex_per_task = bs // num_tasks
-        #     if mode == 'train':
-        #         task_id = torch.arange(num_tasks).view(-1, 1).repeat(1, num_ex_per_task).view(-1).cuda()
+        assert num_tasks % 5 == 0
 
-        # assert task_id.shape[0] == bs
+        num_task_instances = num_ex_per_task * 5
+        num_actual_tasks = num_tasks // 5
 
-        if split_data:
-            split_ratio = 0.5
-            N_train = int(split_ratio * num_ex_per_task)
-            train_mask = torch.cat((torch.ones(num_tasks, N_train), torch.zeros(num_tasks, num_ex_per_task - N_train)), dim=1).cuda()
+        task_id = torch.arange(num_actual_tasks).view(-1, 1).repeat(1, num_task_instances).view(-1).cuda()
+
+        assert task_id.shape[0] == bs
+
+        if self.train_unseen_task or split_data:
+
+            if self.train_unseen_task:
+                num_train = self.shots
+                assert num_ex_per_task > num_train
+            else:
+                num_train = int(0.75 * num_ex_per_task)
+            train_mask = torch.cat((torch.ones(num_tasks, num_train), torch.zeros(num_tasks, num_ex_per_task - num_train)), dim=1).cuda()
             train_mask = train_mask.view(-1)
             test_mask = 1 - train_mask
+
+            if self.train_unseen_task:
+                for param in self.model.parameters():
+                    param.requires_grad = False
+                self.task_embeddings.weight.requires_grad = True
         else:
             train_mask = torch.ones(bs).cuda()
             test_mask = train_mask
 
-        # Strip off task id
-        src_tokens = src_tokens[:, 1:]
+        # Add a dummy token
+        # src_tokens = torch.cat((src_tokens[:, [0]], src_tokens), dim=1)
+        targets = torch.arange(5).view(-1, 1).repeat(num_actual_tasks, num_ex_per_task).view(-1).cuda()
 
         outputs = {}
 
         if ('meta' in self.training_mode or self.training_mode == 'multitask'):
-            if mode == 'eval':
-                task_embeddings = self.task_embeddings_eval
-            else:
-                task_embeddings = self.task_embeddings
+            task_embeddings = self.task_embeddings
 
         # Randomly initialized task embedding
         if self.training_mode == 'multitask':
@@ -285,28 +297,12 @@ class FairseqTransformerClassifier(BaseFairseqModel):
             # assert self.training_mode == 'task_agnostic'
             task_embedding = None
 
+
         if 'meta' in self.training_mode:
 
-            if mode == 'eval':
-                if self.task_emb_cond_type == 'norm':
-                    self.task_embeddings_eval.weight.data.copy_(self.task_emb_init_tensor)
-                else:
-                    self.task_embeddings_eval.weight.data.zero_()
-            else:
-                if self.task_emb_cond_type == 'norm':
-                    self.task_embeddings.weight.data.copy_(self.task_emb_init_tensor)
-                else:
-                    self.task_embeddings.weight.data.zero_()
+            self.task_embeddings.weight.data.zero_()
 
-            if mode == 'eval':
-                z_optimizer = self.z_optimizer_eval
-            else:
-                z_optimizer = self.z_optimizer
-
-            step_size = self.z_lr
-            set_learning_rate(z_optimizer, step_size)
-
-            losses = []
+            z_optimizer = optim.Adam(self.task_embeddings.parameters(), lr=self.z_lr)
 
             for i in range(self.num_grad_updates):
 
@@ -327,11 +323,20 @@ class FairseqTransformerClassifier(BaseFairseqModel):
                     if split_data:
                         outputs['pre_accuracy_test'] = compute_accuracy(logits, targets, mask=test_mask)
                         outputs['pre_loss_test'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
+                        best_perf = outputs['pre_accuracy_test'].item() 
 
-            # if mode == 'train':
-            #     # Clear gradients computed for model parameters
-            #     assert optimizer is not None
-            #     optimizer.zero_grad()
+                if self.train_unseen_task:
+                    if i > 0:
+                        test_perf = compute_accuracy(logits, targets, mask=test_mask).item()
+                        if test_perf > best_perf:
+                            best_perf = test_perf
+
+        if self.train_unseen_task:
+            self.oracle_performance.append(best_perf)
+            self.performance.append(test_perf)
+            train_perf = compute_accuracy(logits, targets, mask=train_mask)
+            self.performance_train.append(train_perf.item())
+            print("\nTrain: %.2f, Test: %.2f, Oracle: %.2f" % (np.mean(self.performance_train), np.mean(self.performance), np.mean(self.oracle_performance)))
 
         if 'meta' in self.training_mode:
             task_embedding = task_embeddings(task_id)
@@ -342,7 +347,8 @@ class FairseqTransformerClassifier(BaseFairseqModel):
         outputs['post_loss_train'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=train_mask)
         if 'pre_loss_train' in outputs:
             outputs['train_loss_delta'] = outputs['pre_loss_train'] - outputs['post_loss_train']
-        if split_data:
+
+        if self.train_unseen_task or split_data:
             outputs['post_accuracy_test'] = compute_accuracy(logits, targets, mask=test_mask)
             outputs['post_loss_test'] = compute_loss(logits, targets, normalize_loss=self.normalize_loss, mask=test_mask)
             if 'pre_loss_test' in outputs:
@@ -350,31 +356,31 @@ class FairseqTransformerClassifier(BaseFairseqModel):
 
         return outputs
 
-    def upgrade_state_dict_named(self, state_dict, name):
-        # if "task_embeddings.weight" in state_dict:
-        #     assert state_dict["task_embeddings.weight"].shape[0] == self.num_train_tasks
-        #     mean_task_emb = state_dict["task_embeddings.weight"].mean(0)
-
-        for k in list(state_dict.keys()):
-            print(k)
-            if "task_embedding" in k:
-                print('Ignoring: ', k)
-                del state_dict[k]
-            # if "task_emb_proj" in k:
-            #     del state_dict[k]
-
-        if self.training_mode != 'task_agnostic':
-            if self.task_emb_cond_type == 'norm':
-                state_dict['task_embedding_init'] = torch.cat([
-                    torch.ones(2 * self.args.encoder_layers, self.encoder_embed_dim),
-                    torch.zeros(2 * self.args.encoder_layers, self.encoder_embed_dim)],
-                    dim=-1
-                ).contiguous().view(-1)
-            else:
-                print('Note: Initializing task embedding with zeros')
-                state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
-
-        return state_dict
+#     def upgrade_state_dict_named(self, state_dict, name):
+#         # if "task_embeddings.weight" in state_dict:
+#         #     assert state_dict["task_embeddings.weight"].shape[0] == self.num_train_tasks
+#         #     mean_task_emb = state_dict["task_embeddings.weight"].mean(0)
+# 
+#         for k in list(state_dict.keys()):
+#             print(k)
+#             if "task_embedding" in k:
+#                 print('Ignoring: ', k)
+#                 del state_dict[k]
+#             # if "task_emb_proj" in k:
+#             #     del state_dict[k]
+# 
+#         if self.training_mode != 'task_agnostic':
+#             if self.task_emb_cond_type == 'norm':
+#                 state_dict['task_embedding_init'] = torch.cat([
+#                     torch.ones(2 * self.args.encoder_layers, self.encoder_embed_dim),
+#                     torch.zeros(2 * self.args.encoder_layers, self.encoder_embed_dim)],
+#                     dim=-1
+#                 ).contiguous().view(-1)
+#             else:
+#                 print('Note: Initializing task embedding with zeros')
+#                 state_dict['task_embedding_init'] = torch.zeros(self.task_emb_size)
+# 
+#         return state_dict
 
 
 @register_model_architecture('classifier_v2', 'cls_v2')
@@ -382,23 +388,31 @@ def toy_transformer_cls(args):
 
     args.regularization = getattr(args, 'regularization', False)
 
-    args.dropout = getattr(args, 'dropout', 0.1)
-    args.attention_dropout = getattr(args, 'attention_dropout', 0.1)
+    args.dropout = getattr(args, 'dropout', 0.0)
+    args.attention_dropout = getattr(args, 'attention_dropout', 0.0)
     args.act_dropout = getattr(args, 'act_dropout', 0.0)
 
-    if not args.regularization:
-        args.dropout = 0.0
-        args.attention_dropout = 0.0
+    if args.regularization:
+        args.dropout = 0.1
+        args.attention_dropout = 0.1
         args.act_dropout = 0.0
 
-    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 128)
+    # args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 64)
+    # args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 128)
+    args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 300)
+    # args.encoder_ffn_embed_dim = getattr(args, 'encoder_ffn_embed_dim', 50)
     args.encoder_layers = getattr(args, 'encoder_layers', 1)
     args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 4)
+    # args.encoder_attention_heads = getattr(args, 'encoder_attention_heads', 1)
     args.bias_kv = getattr(args, 'bias_kv', False)
     args.zero_attn = getattr(args, 'zero_attn', False)
 
-    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 128)
-    args.task_emb_size = getattr(args, 'task_emb_size', 128)
+    # args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 64)
+    # args.task_emb_size = getattr(args, 'task_emb_size', 64)
+    # args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 128)
+    # args.task_emb_size = getattr(args, 'task_emb_size', 128)
+    args.encoder_embed_dim = getattr(args, 'encoder_embed_dim', 300)
+    args.task_emb_size = getattr(args, 'task_emb_size', 300)
     args.share_encoder_input_output_embed = getattr(args, 'share_encoder_input_output_embed', False)
     args.encoder_learned_pos = getattr(args, 'encoder_learned_pos', True)
     args.no_token_positional_embeddings = getattr(args, 'no_token_positional_embeddings', False)

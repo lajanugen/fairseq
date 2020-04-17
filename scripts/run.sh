@@ -149,7 +149,7 @@ ARGS=" --training_mode $TRAINING_MODE --lr $LR --task_emb_size $TASK_EMB_SIZE --
 if [ $RUN_MODE == "eval" ]; then
     ARGS="$ARGS --train_unseen_task --save-interval 1000 --max-epoch $MAX_EPOCH --no_training --shots $SHOTS";
 else
-    ARGS="$ARGS --max-epoch $MAX_EPOCH --save-interval 10 --num_train $SEEN_NUM_TRAIN"; 
+    ARGS="$ARGS --max-epoch $MAX_EPOCH --save-interval 20 --num_train $SEEN_NUM_TRAIN"; 
 fi
 if [ "$TRAIN_ONLY_Z" == "0" ]; then ARGS="$ARGS --tune_model_params"; fi
 
@@ -219,8 +219,8 @@ ARGS=" \
   --z_lr $ZLR \
   --task_emb_cond_type cls_token \
   --load_tasks $LOAD_TASKS \
- 	--disable-validation \
 	--dataset $DATASET \
+	--validate-interval 10 \
   $ARGS"
 # 	--disable-validation \
 #   --task_emb_cond_type cls_token \
